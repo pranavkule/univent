@@ -1,0 +1,9 @@
+{
+  "name": "univent-backend",
+  "version": "0.1.0",
+  "description": "UniVent Lambda handlers",
+  "type": "commonjs",
+  "dependencies": {
+    "aws-sdk": "^2.1500.0"
+  }
+}
