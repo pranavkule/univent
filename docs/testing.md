@@ -3,8 +3,11 @@
 How we will verify UniVent. Manual first, in this order.
 
 ## 1. Frontend (Phase 2, mock data)
-- `npm run dev` in `apps/web`; check list, details, register form,
-  confirmation render with no backend.
+- `npm run dev` in `apps/web`; walk landing → events (search + category
+  filter) → details → sign-up → sign-in → register → confirmation → dashboard.
+- Check validation feedback (short name, bad email, short password, wrong
+  credentials, duplicate registration) and loading/empty/error states.
+- `npm run build` must succeed (no test suite exists yet; build is the check).
 
 ## 2. Backend (Phase 3, `sam local start-api`)
 - Each route with curl/Postman: happy path + bad input
