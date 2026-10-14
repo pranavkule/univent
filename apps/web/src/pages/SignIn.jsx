@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
+import DemoAccounts from '../components/DemoAccounts.jsx'
 import { validateSignInInput } from '../services/auth.js'
 
 export default function SignIn() {
   const { signIn } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = location.state?.from || '/events'
+  const explicitFrom = location.state?.from
+  const from = explicitFrom || '/events'
   const [values, setValues] = useState({ email: '', password: '' })
   const [errors, setErrors] = useState({})
   const [serverError, setServerError] = useState('')
@@ -18,6 +20,14 @@ export default function SignIn() {
     setValues((v) => ({ ...v, [name]: value }))
   }
 
+  // DEV-ONLY helper: fills the mock demo credentials into the form.
+  // Remove with components/DemoAccounts.jsx when Cognito lands.
+  function handleUseDemo(email, password) {
+    setValues({ email, password })
+    setErrors({})
+    setServerError('')
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     const fieldErrors = validateSignInInput(values)
@@ -26,8 +36,27 @@ export default function SignIn() {
     setSubmitting(true)
     setServerError('')
     try {
-      await signIn(values)
-      navigate(from, { replace: true })
+      const session = await signIn(values)
+      const role = (session?.role || '').toLowerCase()
+      if (role === 'organization') {
+        // Organization accounts open their workspace directly. Only a deep
+        // link into the workspace itself is honored instead.
+        const target = explicitFrom && explicitFrom.startsWith('/org') ? explicitFrom : '/org'
+        navigate(target, { replace: true })
+        return
+      }
+      if (role === 'admin') {
+        // Admin accounts open the admin workspace directly. Only a deep
+        // link into it is honored instead.
+        const target = explicitFrom && explicitFrom.startsWith('/admin') ? explicitFrom : '/admin'
+        navigate(target, { replace: true })
+        return
+      }
+      // All events visible first after every other login. Only a deep link
+      // into an event flow (detail / register / confirmation) is honored so
+      // an in-progress registration is not lost.
+      const target = explicitFrom && explicitFrom.startsWith('/events/') ? explicitFrom : '/events'
+      navigate(target, { replace: true })
     } catch (err) {
       setServerError(err.message || 'Sign-in failed. Try again.')
     } finally {
@@ -36,10 +65,12 @@ export default function SignIn() {
   }
 
   return (
-    <div className="container container-narrow">
+    <div className="container auth-container">
       <h2>Sign in</h2>
-      <p className="muted">Mock sign-in for the prototype — use an account you created via Sign up.</p>
-      <form className="form" onSubmit={handleSubmit} noValidate>
+      <p className="muted">Mock sign-in for the prototype — use an account you created via Sign up, or a dev demo account.</p>
+      <div className="auth-layout">
+        <div className="auth-main">
+          <form className="form auth-form" onSubmit={handleSubmit} noValidate>
         <div className="field">
           <label htmlFor="signin-email">Email</label>
           <input
@@ -64,8 +95,11 @@ export default function SignIn() {
         <button className="btn" type="submit" disabled={submitting}>
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
-      </form>
-      <p className="muted">No account yet? <Link to="/signup" state={{ from }}>Sign up</Link></p>
+          </form>
+          <p className="muted">No account yet? <Link to="/signup" state={{ from }}>Sign up</Link></p>
+        </div>
+        <DemoAccounts onUse={handleUseDemo} />
+      </div>
     </div>
   )
 }

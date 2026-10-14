@@ -7,7 +7,8 @@ export default function SignUp() {
   const { signUp } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = location.state?.from || '/events'
+  const explicitFrom = location.state?.from
+  const from = explicitFrom || '/events'
   const [values, setValues] = useState({ name: '', email: '', password: '' })
   const [errors, setErrors] = useState({})
   const [serverError, setServerError] = useState('')
@@ -27,7 +28,9 @@ export default function SignUp() {
     setServerError('')
     try {
       await signUp(values)
-      navigate(from, { replace: true })
+      // Same as sign-in: land on all events first; keep event deep links.
+      const target = explicitFrom && explicitFrom.startsWith('/events/') ? explicitFrom : '/events'
+      navigate(target, { replace: true })
     } catch (err) {
       setServerError(err.message || 'Sign-up failed. Try again.')
     } finally {

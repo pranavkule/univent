@@ -19,7 +19,7 @@ export default function Footer() {
           <ul>
             <li><Link to="/">Home</Link></li>
             <li><Link to="/events">Explore Events</Link></li>
-            <li><Link to="/dashboard">My Registrations</Link></li>
+            <li><Link to="/registrations">My Registrations</Link></li>
           </ul>
         </nav>
         <nav aria-label="Footer account">

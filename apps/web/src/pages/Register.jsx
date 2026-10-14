@@ -2,13 +2,18 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
 import RegistrationForm from '../components/RegistrationForm.jsx'
-import { createRegistration, getEvent } from '../services/api.js'
+import { createRegistration, getEvent, listRegistrations } from '../services/api.js'
 
+// Registration form with pre-submit guards: full events, closed
+// registration windows, and already-registered students see a message
+// instead of the form. Duplicates are also rejected by the mock API (409).
 export default function Register() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
   const [event, setEvent] = useState(null)
+  const [regCount, setRegCount] = useState(0)
+  const [existing, setExisting] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -16,9 +21,13 @@ export default function Register() {
 
   useEffect(() => {
     let cancelled = false
-    getEvent(id)
-      .then((data) => {
-        if (!cancelled) setEvent(data)
+    Promise.all([getEvent(id), listRegistrations(id)])
+      .then(([data, regs]) => {
+        if (cancelled) return
+        setEvent(data)
+        setRegCount(regs.length)
+        const email = (user?.email || '').toLowerCase()
+        setExisting(regs.find((r) => r.email.toLowerCase() === email) || null)
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message || 'Could not load the event.')
@@ -29,7 +38,7 @@ export default function Register() {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, user])
 
   async function handleSubmit(values) {
     setSubmitting(true)
@@ -61,6 +70,10 @@ export default function Register() {
     )
   }
 
+  const today = new Date().toISOString().slice(0, 10)
+  const seatsLeft = Math.max(0, (event.capacity || 0) - regCount)
+  const closed = (event.regDeadline && event.regDeadline < today) || (event.date && event.date < today)
+
   return (
     <div className="container">
       <p><Link to={`/events/${event.eventId}`}>← Back to {event.title}</Link></p>
@@ -68,14 +81,30 @@ export default function Register() {
       <div className="meta">
         <span>{event.date} · {event.venue}</span>
       </div>
-      <p className="muted">Registering as {user?.name} ({user?.email}). Details are pre-filled but editable.</p>
-      <RegistrationForm
-        eventId={event.eventId}
-        onSubmit={handleSubmit}
-        submitting={submitting}
-        serverError={serverError}
-        initialValues={{ name: user?.name || '', email: user?.email || '' }}
-      />
+      {existing && (
+        <div className="alert alert-ok" role="status">
+          You are already registered for this event ({existing.registrationId}).
+          <div><Link className="btn btn-secondary" to="/registrations">View my registrations</Link></div>
+        </div>
+      )}
+      {!existing && seatsLeft <= 0 && (
+        <div className="alert alert-empty" role="status">This event is full. Registration is closed.</div>
+      )}
+      {!existing && seatsLeft > 0 && closed && (
+        <div className="alert alert-empty" role="status">Registration for this event has closed.</div>
+      )}
+      {!existing && seatsLeft > 0 && !closed && (
+        <>
+          <p className="muted">Registering as {user?.name} ({user?.email}). Details are pre-filled but editable.</p>
+          <RegistrationForm
+            eventId={event.eventId}
+            onSubmit={handleSubmit}
+            submitting={submitting}
+            serverError={serverError}
+            initialValues={{ name: user?.name || '', email: user?.email || '' }}
+          />
+        </>
+      )}
     </div>
   )
 }

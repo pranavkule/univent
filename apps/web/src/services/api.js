@@ -65,6 +65,32 @@ function seedRegistrations() {
       createdAt: '2026-10-02T11:30:00.000Z',
       status: 'Confirmed',
     },
+    // Seed rows for the Organization workspace demo (org-owned event ids).
+    // Student dashboards filter by signed-in email, so these change nothing there.
+    {
+      registrationId: 'REG-O1G2H3',
+      eventId: 'org-e1',
+      name: 'Aarav Mehta',
+      email: 'aarav@college.edu',
+      createdAt: '2026-10-20T09:15:00.000Z',
+      status: 'Confirmed',
+    },
+    {
+      registrationId: 'REG-O4J5K6',
+      eventId: 'org-e1',
+      name: 'Diya Nair',
+      email: 'diya@college.edu',
+      createdAt: '2026-10-21T14:40:00.000Z',
+      status: 'Confirmed',
+    },
+    {
+      registrationId: 'REG-O7L8M9',
+      eventId: 'org-e2',
+      name: 'Kabir Shah',
+      email: 'kabir@college.edu',
+      createdAt: '2026-10-22T11:05:00.000Z',
+      status: 'Confirmed',
+    },
   ]
 }
 

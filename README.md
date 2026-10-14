@@ -107,10 +107,14 @@ npm install
 npm run dev      # http://localhost:5173
 ```
 Routes: `/` landing, `/events`, `/events/:id`, `/events/:id/register`
-(sign-in required), `/confirmation/:id`, `/signup`, `/signin`, `/dashboard`.
+(sign-in required), `/confirmation/:id`, `/signup`, `/signin`, `/dashboard`
+(student hub), `/registrations`, `/profile`, `/org/*` (organization role),
+`/admin/*` (admin role).
 `npm run build` + `npm run preview` verified. Mock users/registrations live
 only in this browser's localStorage — temporary prototype storage, not a
-backend. No test suite exists yet; the production build is the current check.
+backend. Demo accounts: student, organization (CodeCell), and admin, all with
+mock password `Demo@123`. No test suite exists yet; the production build is
+the current check.
 
 ## Request flow
 **Request flow:**

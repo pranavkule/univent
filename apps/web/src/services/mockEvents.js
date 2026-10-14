@@ -1,6 +1,8 @@
 // Local mock events. Shape matches docs/api.md so the UI never changes
 // when this is replaced by real API calls in Phase 6.
 // `category` is a frontend-only mock filter facet for Phase 2.
+// `organizer`, `startTime`, `endTime`, and `regDeadline` are mock-only
+// schedule fields used by the student Event Details view.
 export const mockEvents = [
   {
     eventId: 'e1',
@@ -10,6 +12,10 @@ export const mockEvents = [
     description: 'Overnight hackathon. Form a team, build something, demo at dawn.',
     capacity: 100,
     category: 'Technical',
+    organizer: 'CodeCell',
+    startTime: '18:00',
+    endTime: '23:59',
+    regDeadline: '2026-11-01',
   },
   {
     eventId: 'e2',
@@ -19,6 +25,10 @@ export const mockEvents = [
     description: 'Hands-on intro to Arduino and line-following robots. No experience needed.',
     capacity: 40,
     category: 'Technical',
+    organizer: 'Robotics Club',
+    startTime: '10:00',
+    endTime: '13:00',
+    regDeadline: '2026-11-07',
   },
   {
     eventId: 'e3',
@@ -28,6 +38,10 @@ export const mockEvents = [
     description: 'Auditions for dance, music, and drama slots at the annual cultural fest.',
     capacity: 200,
     category: 'Cultural',
+    organizer: 'Cultural Committee',
+    startTime: '09:00',
+    endTime: '17:00',
+    regDeadline: '2026-11-11',
   },
   {
     eventId: 'e4',
@@ -37,6 +51,10 @@ export const mockEvents = [
     description: 'Guest lecture on serverless architectures with a live AWS demo.',
     capacity: 80,
     category: 'Technical',
+    organizer: 'CodeCell',
+    startTime: '14:00',
+    endTime: '16:00',
+    regDeadline: '2026-11-14',
   },
   {
     eventId: 'e5',
@@ -46,6 +64,10 @@ export const mockEvents = [
     description: 'Trials for the college football squad ahead of the inter-college league.',
     capacity: 60,
     category: 'Sports',
+    organizer: 'Sports Committee',
+    startTime: '07:00',
+    endTime: '11:00',
+    regDeadline: '2026-11-19',
   },
   {
     eventId: 'e6',
@@ -55,6 +77,10 @@ export const mockEvents = [
     description: 'Morning photo walk around campus. Any camera, including phones.',
     capacity: 30,
     category: 'Cultural',
+    organizer: 'Photography Club',
+    startTime: '06:30',
+    endTime: '09:00',
+    regDeadline: '2026-11-23',
   },
   {
     eventId: 'e7',
@@ -64,6 +90,10 @@ export const mockEvents = [
     description: 'Founders and alumni discuss starting up from a college dorm room.',
     capacity: 150,
     category: 'Business',
+    organizer: 'E-Cell',
+    startTime: '15:00',
+    endTime: '17:30',
+    regDeadline: '2026-11-28',
   },
 ]
 

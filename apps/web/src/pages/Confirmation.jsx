@@ -66,7 +66,7 @@ export default function Confirmation() {
         </div>
         <p>
           <Link className="btn btn-secondary" to="/events">Browse more events</Link>{' '}
-          <Link className="btn" to="/dashboard">My registrations</Link>
+          <Link className="btn" to="/registrations">My registrations</Link>
         </p>
       </div>
     </div>

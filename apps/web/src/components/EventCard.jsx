@@ -31,7 +31,7 @@ function SeatsIcon() {
   )
 }
 
-export default function EventCard({ event }) {
+export default function EventCard({ event, registered = false }) {
   return (
     <article className="event-card">
       <div className={categoryClass(event.category)} aria-hidden="true">
@@ -40,6 +40,7 @@ export default function EventCard({ event }) {
       </div>
       <div className="event-body">
         <h3>{event.title}</h3>
+        {registered && <span className="badge badge-ok">Registered</span>}
         <p className="desc">{event.description}</p>
         <ul className="event-meta">
           <li><CalendarIcon /> {event.date}</li>
