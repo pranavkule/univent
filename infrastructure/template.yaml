@@ -6,6 +6,93 @@ Globals:
   Function:
     Timeout: 10
     Runtime: nodejs20.x
+    MemorySize: 256
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        # Browser origin allowed to call the API. Phase 7 pins this to the
+        # deployed S3/CloudFront origin; '*' is fine while testing locally.
+        CORS_ORIGIN: '*'
+        # Local development identity headers stay off in the deployed stack.
+        # The handlers also refuse those headers whenever AWS_EXECUTION_ENV
+        # is set, which is always the case inside AWS Lambda.
+        UNIVENT_DEV_AUTH: 'false'
+        # Storage backend. 'memory' is the temporary Phase 3 store; Phase 4
+        # adds the DynamoDB-backed implementation.
+        UNIVENT_STORE: 'memory'
 
 Resources:
-  # TODO: add DynamoDB tables, Lambda functions, ApiGateway, S3 + CloudFront
+  UniventApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Description: UniVent HTTP API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+
+  GetEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: GET /events - list all events (public)
+      CodeUri: ../backend/functions/
+      Handler: getEvents.handler
+      Events:
+        ListEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /events
+            Method: GET
+
+  CreateEventFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: POST /events - create an event (admin only)
+      CodeUri: ../backend/functions/
+      Handler: createEvent.handler
+      Events:
+        CreateEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /events
+            Method: POST
+
+  RegisterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: POST /register - register for an event (signed-in user)
+      CodeUri: ../backend/functions/
+      Handler: register.handler
+      Events:
+        Register:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /register
+            Method: POST
+
+  GetRegistrationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: GET /registrations - list registrations (admin sees all, others see their own)
+      CodeUri: ../backend/functions/
+      Handler: getRegistrations.handler
+      Events:
+        ListRegistrations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /registrations
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the UniVent API
+    Value: !Sub "https://${UniventApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
