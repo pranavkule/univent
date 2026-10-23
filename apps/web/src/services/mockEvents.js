@@ -1,8 +1,5 @@
-// Local mock events. Shape matches docs/api.md so the UI never changes
-// when this is replaced by real API calls in Phase 6.
-// `category` is a frontend-only mock filter facet for Phase 2.
-// `organizer`, `startTime`, `endTime`, and `regDeadline` are mock-only
-// schedule fields used by the student Event Details view.
+import { eventCategories } from './eventCategories.js'
+
 export const mockEvents = [
   {
     eventId: 'e1',
@@ -97,4 +94,4 @@ export const mockEvents = [
   },
 ]
 
-export const mockCategories = ['Technical', 'Cultural', 'Sports', 'Business']
+export const mockCategories = eventCategories

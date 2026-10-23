@@ -4,12 +4,12 @@ import { useAuth } from '../components/AuthProvider.jsx'
 import EventCard from '../components/EventCard.jsx'
 import { listEvents } from '../services/api.js'
 import { sortByDate } from '../services/eventFilter.js'
-import { mockCategories } from '../services/mockEvents.js'
+import { eventCategories as mockCategories } from '../services/eventCategories.js'
 
 const STEPS = [
   { title: 'Discover an event', text: 'Browse workshops, hackathons, cultural events, talks, and competitions happening on campus.' },
   { title: 'Register online', text: 'Sign in, pick an event, and register in under a minute with an instant confirmation.' },
-  { title: 'Track your registration', text: 'Find your mock registration ID anytime under My Registrations and show it at the venue.' },
+  { title: 'Track your registration', text: 'Find your registration ID anytime under My Registrations and show it at the venue.' },
 ]
 
 const WHY = [
@@ -124,7 +124,7 @@ function DashboardPreview({ spotlight, schedule }) {
       </div>
 
       <span className="dash-float dash-float-a">{spotlight.category} season</span>
-      <span className="dash-float dash-float-b">Zero-fee mock checkout</span>
+      <span className="dash-float dash-float-b">Zero-fee registration</span>
     </div>
   )
 }
@@ -260,7 +260,7 @@ export default function Landing() {
             <div>
               <p className="kicker">Upcoming events</p>
               <h2 id="upcoming-heading">Don&apos;t miss what&apos;s next</h2>
-              <p className="block-sub">The nearest dates across every track — powered by live mock data.</p>
+              <p className="block-sub">The nearest dates across every track.</p>
             </div>
             <Link className="link-more" to="/events">Browse all events <ArrowIcon /></Link>
           </div>
@@ -326,7 +326,7 @@ export default function Landing() {
           <div className="cta-glow" aria-hidden="true" />
           <p className="kicker kicker-center">Get started</p>
           <h2 id="cta-heading">Ready to find your event?</h2>
-          <p>Browse what&apos;s on this month, or create a free mock account to register in minutes.</p>
+          <p>Browse what&apos;s on this month, or create a free account to register in minutes.</p>
           <div className="hero-actions hero-actions-center">
             <Link className="btn btn-primary-grad btn-lg" to="/events">Explore Upcoming Events</Link>
             {!user && <Link className="btn btn-ghost btn-lg" to="/signup">Create Account</Link>}

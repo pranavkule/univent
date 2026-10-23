@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
 import RegistrationForm from '../components/RegistrationForm.jsx'
 import { createRegistration, getEvent, listRegistrations } from '../services/api.js'
+import { getRemainingSeats } from '../services/eventAvailability.js'
 
 // Registration form with pre-submit guards: full events, closed
 // registration windows, and already-registered students see a message
@@ -12,7 +13,6 @@ export default function Register() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [event, setEvent] = useState(null)
-  const [regCount, setRegCount] = useState(0)
   const [existing, setExisting] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -21,20 +21,22 @@ export default function Register() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([getEvent(id), listRegistrations(id)])
-      .then(([data, regs]) => {
+    async function load() {
+      try {
+        const data = await getEvent(id)
         if (cancelled) return
         setEvent(data)
-        setRegCount(regs.length)
+        const regs = await listRegistrations(id)
+        if (cancelled) return
         const email = (user?.email || '').toLowerCase()
         setExisting(regs.find((r) => r.email.toLowerCase() === email) || null)
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setLoadError(err.message || 'Could not load the event.')
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false)
-      })
+      }
+    }
+    load()
     return () => {
       cancelled = true
     }
@@ -45,7 +47,7 @@ export default function Register() {
     setServerError('')
     try {
       const registration = await createRegistration(values)
-      navigate(`/confirmation/${registration.registrationId}`)
+      navigate(`/confirmation/${registration.registrationId}`, { state: { registration } })
     } catch (err) {
       setServerError(err.message || 'Registration failed. Try again.')
     } finally {
@@ -71,7 +73,7 @@ export default function Register() {
   }
 
   const today = new Date().toISOString().slice(0, 10)
-  const seatsLeft = Math.max(0, (event.capacity || 0) - regCount)
+  const seatsLeft = getRemainingSeats(event)
   const closed = (event.regDeadline && event.regDeadline < today) || (event.date && event.date < today)
 
   return (
@@ -87,13 +89,18 @@ export default function Register() {
           <div><Link className="btn btn-secondary" to="/registrations">View my registrations</Link></div>
         </div>
       )}
-      {!existing && seatsLeft <= 0 && (
+      {!existing && seatsLeft === null && (
+        <div className="alert alert-empty" role="status">
+          Seat availability could not be confirmed. Registration is temporarily unavailable.
+        </div>
+      )}
+      {!existing && seatsLeft !== null && seatsLeft <= 0 && (
         <div className="alert alert-empty" role="status">This event is full. Registration is closed.</div>
       )}
-      {!existing && seatsLeft > 0 && closed && (
+      {!existing && seatsLeft !== null && seatsLeft > 0 && closed && (
         <div className="alert alert-empty" role="status">Registration for this event has closed.</div>
       )}
-      {!existing && seatsLeft > 0 && !closed && (
+      {!existing && seatsLeft !== null && seatsLeft > 0 && !closed && (
         <>
           <p className="muted">Registering as {user?.name} ({user?.email}). Details are pre-filled but editable.</p>
           <RegistrationForm

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../components/AuthProvider.jsx'
 import OrgStatusBadge from '../../components/OrgStatusBadge.jsx'
-import { mockCategories } from '../../services/mockEvents.js'
+import { eventCategories as mockCategories } from '../../services/eventCategories.js'
 import { createOrgEvent, getOrgEvent, isEditableStatus, updateOrgEvent } from '../../services/orgEvents.js'
 
 const EMPTY = {

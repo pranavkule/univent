@@ -16,18 +16,18 @@ How we verify UniVent. Manual first, in this order.
 - The quick memory-mode server needs no AWS:
   `UNIVENT_DEV_AUTH=true node scripts/dev-api.js`.
 
-## 3. Backend storage and auth (Phases 4–5)
-Verified locally on 2026-10-24 after Phase 5:
+## 3. Backend storage, auth, and integration (Phases 4–6)
+Verified locally on 2026-10-24 after Phase 6:
 
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Install backend dependencies | `npm --prefix backend/functions install` | once per clone |
-| Handler + DynamoDB store + auth unit tests | `npm --prefix backend test` | 68/68 pass |
+| Handler + DynamoDB store + auth unit tests | `npm --prefix backend test` | 69/69 pass |
 | DynamoDB Local integration | `npm --prefix backend run test:integration` | 9/9 pass, 0 skipped |
 | SAM template lint | `sam validate --lint --template-file infrastructure/template.yaml` | valid |
 | SAM build | `sam build --template-file infrastructure/template.yaml --build-dir <short path>` | succeeds |
-| Frontend auth tests | `npm --prefix apps/web test` | 12/12 pass |
-| Frontend build | `npm --prefix apps/web run build` | passes (152 modules) |
+| Frontend auth + live API tests | `npm --prefix apps/web test` | 26/26 pass |
+| Frontend build | `npm --prefix apps/web run build` | passes (161 modules) |
 
 The integration suite starts from Docker:
 
@@ -78,11 +78,27 @@ Deployment-dependent (Phase 7):
 Need Docker for the storage integration suite; `sam local` does not exercise
 the Cognito authorizer.
 
-## 5. End-to-end (Phase 6–8)
+## 5. Frontend API integration (Phase 6)
+- `VITE_API_MODE=mock` preserves the browser-local demo.
+- `VITE_API_MODE=live` with `VITE_API_URL` sends `GET /events` publicly and
+  protected calls with `getAuthHeaders()`.
+- Mocked-HTTP tests cover Cognito ID tokens, local dev identity headers,
+  response envelopes, `401`/`403`/`409`/`500` errors, network failures, and
+  expired local sessions.
+- Event availability uses the public `registeredCount`; the live API has no
+  cancel route, so cancellation is hidden outside mock mode.
+- Admin event creation calls admin-only `POST /events`.
+- Org workspace records remain browser-local mock data; live registration
+  history is student/admin only.
+- A live transport smoke against `scripts/dev-api.js` passed: public list,
+  admin event creation, student registration/history, count update, duplicate
+  `409`, and non-admin create `403`.
+
+## 6. End-to-end (Phase 7–8)
 - List → details → login → register → confirmation → admin registrations,
   first locally then against the deployed URLs from an incognito window.
 
-## 6. Evidence
+## 7. Evidence
 - Results recorded here (pass/fail per case).
 - Screenshots in `docs/screenshots/` (list, details, form, confirmation,
   login, admin view, CloudWatch logs).

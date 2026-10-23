@@ -9,6 +9,7 @@ function publicEvent(event) {
     venue: event.venue,
     description: event.description,
     capacity: event.capacity,
+    registeredCount: Number.isInteger(event.registeredCount) ? event.registeredCount : null,
     category: event.category,
     organizer: event.organizer,
     startTime: event.startTime,

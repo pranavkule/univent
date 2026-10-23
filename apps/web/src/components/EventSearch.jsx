@@ -1,4 +1,4 @@
-import { mockCategories } from '../services/mockEvents.js'
+import { eventCategories as mockCategories } from '../services/eventCategories.js'
 
 // Reusable search + category filter. Controlled by the parent page so the
 // landing discovery section and the Events page share one implementation.

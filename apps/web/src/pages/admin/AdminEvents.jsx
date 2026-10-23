@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
 import { listPlatformEvents } from '../../services/admin.js'
-import { mockCategories } from '../../services/mockEvents.js'
+import { eventCategories as mockCategories } from '../../services/eventCategories.js'
 import { ORG_STATUSES, moderateOrgEvent } from '../../services/orgEvents.js'
 
 // Event management across the platform: public system events (read-only
@@ -11,10 +12,11 @@ import { ORG_STATUSES, moderateOrgEvent } from '../../services/orgEvents.js'
 const MODERATABLE = new Set(['pending', 'published'])
 
 export default function AdminEvents() {
+  const location = useLocation()
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState(location.state?.notice || '')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('All')
@@ -114,7 +116,8 @@ export default function AdminEvents() {
   return (
     <>
       <p className="muted org-sub">
-        {events.length} events across the platform. Mock data — stored in this browser only.
+        {events.length} events across the platform.
+        {' '}<Link className="link-more" to="/admin/events/new">Create event</Link>
       </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}

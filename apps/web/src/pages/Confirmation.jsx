@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { getEvent, getRegistration } from '../services/api.js'
 
 export default function Confirmation() {
   const { id } = useParams()
-  const [registration, setRegistration] = useState(null)
+  const location = useLocation()
+  const seeded = location.state?.registration || null
+  const [registration, setRegistration] = useState(seeded)
   const [event, setEvent] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    getRegistration(id)
-      .then(async (reg) => {
+    async function load() {
+      try {
+        const reg = seeded || await getRegistration(id)
         if (cancelled) return
         setRegistration(reg)
         try {
@@ -21,17 +24,17 @@ export default function Confirmation() {
         } catch {
           if (!cancelled) setEvent(null)
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setError(err.message || 'Could not load the confirmation.')
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false)
-      })
+      }
+    }
+    load()
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, seeded])
 
   if (loading) {
     return (
@@ -52,10 +55,10 @@ export default function Confirmation() {
 
   return (
     <div className="container">
-      <div className="alert alert-ok">Registration successful! (Mock confirmation — nothing was sent anywhere.)</div>
+      <div className="alert alert-ok">Registration successful!</div>
       <div className="detail">
         <h2>Confirmation</h2>
-        <p>Your mock registration ID (show it at the venue):</p>
+        <p>Your registration ID (show it at the venue):</p>
         <span className="reg-id">{registration.registrationId}</span>
         <div className="meta">
           <span>Name: {registration.name}</span>

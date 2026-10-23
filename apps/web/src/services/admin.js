@@ -16,16 +16,20 @@
 // internals with fetch() against API Gateway/Lambda/DynamoDB without
 // rewriting the UI.
 
-import { listEvents, listRegistrations } from './api.js'
+import { API_MODE, listEvents, listRegistrations } from './api.js'
 import { listMockUsers } from './auth.js'
 import { listAllOrgEvents } from './orgEvents.js'
 import { listOrganizations } from './organizations.js'
+
+function mockOrgEvents() {
+  return API_MODE === 'mock' ? listAllOrgEvents() : Promise.resolve([])
+}
 
 export async function getPlatformSummary() {
   const [users, orgs, orgEvents, regs, pubEvents] = await Promise.all([
     Promise.resolve(listMockUsers()),
     listOrganizations(),
-    listAllOrgEvents(),
+    mockOrgEvents(),
     listRegistrations(),
     listEvents(),
   ])
@@ -42,7 +46,7 @@ export async function getPlatformSummary() {
 // Every event on the platform: public mock events (published system rows,
 // read-only) plus all organization-store events with their workflow status.
 export async function listPlatformEvents() {
-  const [pubEvents, orgEvents] = await Promise.all([listEvents(), listAllOrgEvents()])
+  const [pubEvents, orgEvents] = await Promise.all([listEvents(), mockOrgEvents()])
   const system = pubEvents.map((e) => ({
     ...e,
     source: 'system',
@@ -88,7 +92,7 @@ export async function getEventStatusDistribution() {
 export async function listRecentActivity(limit = 8) {
   const [regs, orgEvents, events] = await Promise.all([
     listRegistrations(),
-    listAllOrgEvents(),
+    mockOrgEvents(),
     listEvents(),
   ])
   const titles = {}

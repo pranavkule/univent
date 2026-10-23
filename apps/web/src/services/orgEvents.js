@@ -15,8 +15,8 @@
 // internals with fetch() against API Gateway/Lambda/DynamoDB without
 // rewriting the UI.
 
-import { ApiError, listRegistrations } from './api.js'
-import { mockCategories } from './mockEvents.js'
+import { ApiError, listMockRegistrations } from './api.js'
+import { eventCategories as mockCategories } from './eventCategories.js'
 
 const ORG_EVENTS_KEY = 'univent.org-events.v1'
 const LATENCY_MS = 250
@@ -298,7 +298,7 @@ export async function cancelOrgEvent(orgEmail, eventId) {
 export async function listOrgRegistrations(orgEmail) {
   const events = await listOrgEvents(orgEmail)
   const ids = new Set(events.map((e) => e.eventId))
-  const regs = await listRegistrations()
+  const regs = await listMockRegistrations()
   return regs.filter((r) => ids.has(r.eventId))
 }
 

@@ -19,6 +19,7 @@ import SignIn from './pages/SignIn.jsx'
 import SignUp from './pages/SignUp.jsx'
 import StudentProfile from './pages/StudentProfile.jsx'
 import StudentRegistrations from './pages/StudentRegistrations.jsx'
+import AdminEventForm from './pages/admin/AdminEventForm.jsx'
 import AdminEvents from './pages/admin/AdminEvents.jsx'
 import AdminOrganizations from './pages/admin/AdminOrganizations.jsx'
 import AdminOverview from './pages/admin/AdminOverview.jsx'
@@ -69,6 +70,7 @@ export default function App() {
               <Route index element={<AdminOverview />} />
               <Route path="organizations" element={<AdminOrganizations />} />
               <Route path="events" element={<AdminEvents />} />
+              <Route path="events/new" element={<AdminEventForm />} />
               <Route path="users" element={<AdminUsers />} />
               <Route path="reports" element={<AdminReports />} />
             </Route>

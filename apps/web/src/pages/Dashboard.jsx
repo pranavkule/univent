@@ -76,7 +76,7 @@ export default function Dashboard() {
   return (
     <div className="container">
       <h2>Welcome back, {user?.name || 'student'}.</h2>
-      <p className="muted">Here is what is happening on campus. Mock data — stored in this browser only.</p>
+      <p className="muted">Here is what is happening on campus.</p>
 
       <div className="org-stats" role="list" aria-label="Student summary">
         <div className="org-stat" role="listitem">

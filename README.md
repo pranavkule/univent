@@ -2,14 +2,15 @@
 
 UniVent is a cloud-based event registration and management application designed for colleges, universities, and organizations. It allows users to explore events, register online, and receive registration confirmations through a simple web interface.
 
-Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API, Phase 4 DynamoDB storage, and Phase 5 Cognito authentication are implemented and verified locally. The frontend still uses browser-local mock event data until the Phase 6 API integration; auth can run in mock or Cognito mode. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
+Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API, Phase 4 DynamoDB storage, and Phase 5 Cognito authentication are implemented and verified locally. Phase 6 connects the frontend data seam to that API while keeping a browser-local mock mode; auth can run in mock or Cognito mode. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
 
 ## What it does (scope)
 - Students browse college events, view details, and register after signing in.
-- Participants view and cancel their own mock registrations on a dashboard.
-- The frontend uses browser-local mock event data until Phase 6; the API
-  Gateway/Lambda API, DynamoDB storage, and Cognito auth are implemented
-  locally. Deployment and live checks remain Phase 7.
+- Participants view their own registration history; cancellation remains a
+  mock-mode demo feature until the backend exposes a cancel route.
+- The frontend data seam supports the API Gateway/Lambda API or browser-local
+  mock data. DynamoDB storage and Cognito auth are implemented locally.
+  Deployment and live checks remain Phase 7.
 
 ## Project Overview
 
@@ -97,7 +98,7 @@ Serverless college event registration and management system built with React + V
 2. `docs/api.md` — routes, auth/role rules, and data shapes.
 3. `docs/aws-setup.md` — what to create in AWS and in which order.
 4. `docs/testing.md` — how we will test it.
-5. `phases.md` + `docs/phases/` — implementation roadmap (Phases 1–5 done locally).
+5. `phases.md` + `docs/phases/` — implementation roadmap (Phases 1–6 done locally).
 
 ## Run the frontend
 ```bash
@@ -110,12 +111,19 @@ Routes: `/` landing, `/events`, `/events/:id`, `/events/:id/register`
 `/confirm-signup`, `/signin`, `/dashboard` (student hub), `/registrations`,
 `/profile`, `/org/*` (organization role), `/admin/*` (admin role).
 
-Default local mode is mock auth: users and registrations stay in this browser's
-localStorage, with demo accounts for student, organization (CodeCell), and admin
-(mock password `Demo@123`). To use Cognito, copy `.env.example` to `.env.local`,
-set `VITE_AUTH_MODE=cognito` plus the pool/client/region values, and install
-dependencies. `npm test` covers auth validation, role mapping, and the mock
-flow; `npm run build` is the production check.
+Default local mode is mock data plus mock auth: seed events and demo accounts
+ship with the app, while created events, accounts, and registrations are stored
+in this browser's localStorage. Demo accounts are available for student,
+organization (CodeCell), and admin (mock password `Demo@123`).
+
+To call the backend, copy `.env.example` to `.env.local`, set
+`VITE_API_MODE=live` and `VITE_API_URL` to the API Gateway (or
+`http://localhost:3000` for `scripts/dev-api.js`). For local SAM testing with
+development identity headers, also set `VITE_DEV_AUTH=true`. For Cognito, set
+`VITE_AUTH_MODE=cognito` plus the pool/client/region values.
+
+`npm test` covers auth validation, role mapping, the mock auth flow, and the
+live API transport with mocked HTTP; `npm run build` is the production check.
 
 ## Request flow
 **Request flow:**
@@ -132,9 +140,9 @@ flow; `npm run build` is the production check.
 7. The application displays the result, including a registration confirmation when successful.
 
 ## Status
-Phases 1–5 complete locally (foundation, mock-data frontend, API, DynamoDB
-storage, Cognito auth). No AWS deployment yet; Phase 6 wires the UI to the API,
-and Phase 7 deploys and runs the live auth checks. See `phases.md`.
+Phases 1–6 complete locally (foundation, frontend, API, DynamoDB storage,
+Cognito auth, frontend API integration). No AWS deployment yet; Phase 7
+deploys and runs the live auth checks. See `phases.md`.
 
 Amazon Cognito supports authentication and protected operations, while CloudWatch provides backend execution logs for troubleshooting.
 
@@ -209,7 +217,7 @@ npm run dev
 
 Open the local URL printed by Vite in your terminal.
 
-The frontend may initially use mock data, depending on the implementation phase.
+Without `VITE_API_MODE=live`, the frontend uses browser-local mock data. Set the API and auth variables described above to use the real backend.
 
 ### 3. Configure the AWS Backend
 
@@ -279,10 +287,12 @@ Refer to [`phases.md`](phases.md) for current progress, deliverables, and comple
 
 Locally verified so far:
 
-- Frontend auth validation, role mapping, and mock sign-up/sign-in
+- Frontend auth validation, role mapping, mock sign-up/sign-in, and live API
+  transport with mocked HTTP for mock/dev and Cognito auth modes
   (`npm --prefix apps/web test`).
-- Event retrieval and registration API endpoints plus the student/org/admin
-  role matrix (`npm --prefix backend test`).
+- Event retrieval/creation and registration API endpoints plus the
+  student/org/admin role matrix, including public registration counts
+  (`npm --prefix backend test`).
 - Persistence, concurrency, duplicate prevention, and owner-scoped reads
   against DynamoDB Local (`npm --prefix backend run test:integration`).
 - SAM template validation/build and the production frontend build.

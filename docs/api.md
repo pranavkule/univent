@@ -47,6 +47,7 @@ Creates return the created object directly (`201`).
 | `venue` | string | yes | 2–120 characters |
 | `description` | string | no | up to 2000 characters |
 | `capacity` | number | no | whole number 1–5000, defaults to `100` |
+| `registeredCount` | number \| null | no | confirmed registrations; `null` when the stored counter is unavailable |
 | `category` | string | no | e.g. `Technical`, `Cultural`, `Sports`, `Business` |
 | `organizer` | string | no | organisation running the event |
 | `startTime` | string | no | `HH:MM` (24-hour) |
@@ -57,7 +58,7 @@ Creates return the created object directly (`201`).
 ```json
 { "eventId": "e1", "title": "Hack Night", "date": "2026-11-02", "venue": "Seminar Hall A",
   "description": "Overnight hackathon. Form a team, build something, demo at dawn.",
-  "capacity": 100, "category": "Technical", "organizer": "CodeCell",
+  "capacity": 100, "registeredCount": 0, "category": "Technical", "organizer": "CodeCell",
   "startTime": "18:00", "endTime": "23:59", "regDeadline": "2026-11-01" }
 ```
 
@@ -201,8 +202,8 @@ Access-Control-Max-Age: 600
 ```json
 { "events": [ { "eventId": "e1", "title": "Hack Night", "date": "2026-11-02",
   "venue": "Seminar Hall A", "description": "Overnight hackathon. Form a team, build something, demo at dawn.",
-  "capacity": 100, "category": "Technical", "organizer": "CodeCell", "startTime": "18:00",
-  "endTime": "23:59", "regDeadline": "2026-11-01" } ] }
+  "capacity": 100, "registeredCount": 0, "category": "Technical", "organizer": "CodeCell",
+  "startTime": "18:00", "endTime": "23:59", "regDeadline": "2026-11-01" } ] }
 ```
 
 ### POST /events (admin)
@@ -214,8 +215,8 @@ curl -X POST http://localhost:3000/events \
 ```
 ```json
 { "eventId": "evt-c76efc09260d", "title": "Serverless Meetup", "date": "2026-12-05",
-  "venue": "CSE Seminar Room", "description": "", "capacity": 60, "category": "Technical",
-  "organizer": "CodeCell", "startTime": "16:00", "endTime": "18:00",
+  "venue": "CSE Seminar Room", "description": "", "capacity": 60, "registeredCount": 0,
+  "category": "Technical", "organizer": "CodeCell", "startTime": "16:00", "endTime": "18:00",
   "regDeadline": "2026-12-04", "createdAt": "2026-10-21T19:31:29.729Z" }
 ```
 Status `201`. Without an identity: `401 {"message":"Sign in to create an event."}`.
@@ -265,5 +266,6 @@ Status `200`. Not signed in: `401`. Unknown `eventId`: `404`.
 - Organization-created events with an approval workflow (draft → pending →
   published) — later phase; `POST /events` stays admin-only and organization
   access to registration data is `403` for now.
-- Frontend wired to this API (`services/api.js` swap) and sending the Cognito
-  ID token — Phase 6.
+- Registration cancellation and individual registration lookup routes.
+- Deployed live API/Cognito verification — Phase 7. Phase 6 wires the frontend
+  to this API and sends the Cognito ID token; mock mode remains available.

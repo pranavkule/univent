@@ -1,5 +1,7 @@
 # Phase 6 — Integration and Security
 
+Status: done locally; deployment-dependent checks remain Phase 7.
+
 Goal: connect all modules, enforce permissions, configure error handling, verify the complete flow.
 
 ## Prerequisites
@@ -29,3 +31,22 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
 ## Done when
 - Full flow works against the real API with auth on; unauthorized calls get `401/403`, bad input gets `400`.
 - No mock data in the happy path; no hardcoded URLs/secrets in git.
+
+## Implemented locally
+- `services/api.js` selects `liveApi.js` or the browser-local mock seam with
+  `VITE_API_MODE`; live mode requires `VITE_API_URL`.
+- Protected calls use `getAuthHeaders()` from the existing auth facade.
+- Public event reads avoid protected registration calls; student registration
+  history is loaded only for student accounts.
+- `GET /events` now exposes the stored `registeredCount` so availability works
+  without a new route. This is response-only; storage and transactions are
+  unchanged.
+- Confirmation uses the created registration state and falls back to the
+  signed-in student's history.
+- Cancellation is mock-only until a backend route exists; the live UI hides it.
+- Admin event creation uses admin-only `POST /events`.
+- Organization workspace events and registrations remain explicitly
+  browser-local mock data.
+- Frontend tests use mocked HTTP for Cognito and local dev headers.
+- Remaining Phase 7 checks: deployed API URL/CORS, Cognito authorizer
+  `401/403`, token refresh, and live end-to-end verification.

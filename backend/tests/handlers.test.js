@@ -49,6 +49,7 @@ describe('GET /events', () => {
       'venue',
       'description',
       'capacity',
+      'registeredCount',
       'category',
       'organizer',
       'startTime',
@@ -73,6 +74,18 @@ describe('GET /events', () => {
   it('is public - no identity is required', async () => {
     const res = await invoke(getEvents.handler, { method: 'GET' })
     assert.equal(res.statusCode, 200)
+  })
+
+  it('reports the confirmed registration count for availability', async () => {
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
+    })
+
+    const res = await invoke(getEvents.handler, { method: 'GET' })
+    const event = res.json.events.find((row) => row.eventId === 'e1')
+    assert.equal(event.registeredCount, 1)
   })
 
   it('rejects a wrong method with 405', async () => {

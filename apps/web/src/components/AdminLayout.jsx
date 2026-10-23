@@ -40,6 +40,7 @@ const TITLES = {
   '/admin': 'Overview',
   '/admin/organizations': 'Organizations',
   '/admin/events': 'Events',
+  '/admin/events/new': 'Create Event',
   '/admin/users': 'Users',
   '/admin/reports': 'Reports & Activity',
 }

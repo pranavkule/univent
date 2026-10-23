@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
-import { cancelRegistration, listEvents, listRegistrations } from '../services/api.js'
+import { API_MODE, cancelRegistration, listEvents, listRegistrations } from '../services/api.js'
 
 // My Registrations: the signed-in student's own registrations only.
 // Cancellation is allowed for upcoming events and always asks first.
@@ -96,7 +96,7 @@ export default function StudentRegistrations() {
     <div className="container">
       <h2>My registrations</h2>
       <p className="muted">
-        Signed in as {user?.name} ({user?.email}). Mock data — stored in this browser only.
+        Signed in as {user?.name} ({user?.email}).
       </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {mine.length === 0 ? (
@@ -137,7 +137,9 @@ export default function StudentRegistrations() {
                         <td>{evt?.date || '—'}</td>
                         <td><span className="badge badge-ok">{r.status || 'Confirmed'}</span></td>
                         <td className="org-actions">
-                          {allowed ? (
+                          {API_MODE !== 'mock' ? (
+                            <span className="muted">Not available</span>
+                          ) : allowed ? (
                             <button
                               type="button"
                               className="btn btn-secondary btn-sm"
