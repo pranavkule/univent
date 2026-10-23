@@ -31,14 +31,20 @@ token rejection and group-claim behavior need a deployed stage.
    - Authorizer protects `POST /events`, `POST /register`,
      `GET /registrations`; `GET /events` stays public.
    - Deploy-time outputs: `UserPoolId`, `UserPoolClientId`, `CognitoRegion`.
-4. **Deploy (Phase 7)** — `sam build && sam deploy --guided`; on Windows use a
-   short `--build-dir` if SDK type paths hit the legacy path limit. Build the
-   frontend (`npm run build` in `apps/web`) and upload `dist/` to
-   S3/CloudFront.
+4. **Deploy (Phase 7)** — follow the PowerShell preflight, deployment gates,
+   output handling, and acceptance checklist in
+   `docs/phases/PHASE-07-DEPLOYMENT.md`. Do not deploy until the AWS Academy
+   account identity, region, execution role, hosting, and CORS choices are
+   confirmed.
 5. **Monitor** — CloudWatch Logs for each Lambda + API Gateway access logs.
 
 ## Frontend auth configuration
-Copy `apps/web/.env.example` to `apps/web/.env.local` (ignored by git):
+For local/mock use, copy `apps/web/.env.example` to
+`apps/web/.env.local` (ignored by git). For a production build, use the
+deployed API and Cognito outputs in `apps/web/.env.production.local` as
+described in the Phase 7 deployment guide. The production configuration must
+set `VITE_API_MODE=live`, `VITE_AUTH_MODE=cognito`, `VITE_API_URL`, and the
+Cognito region, user pool ID, and client ID.
 
 ```dotenv
 VITE_AUTH_MODE=mock
@@ -56,16 +62,16 @@ VITE_COGNITO_CLIENT_ID=
   `scripts/dev-api.js`; deployed Lambda ignores dev identity headers.
 
 ## Privileged account provisioning
-Create organization/admin users with the operator script, not public sign-up:
+Create organization/admin users with the operator script, not public sign-up.
+The commands below use PowerShell:
 
-```bash
-export COGNITO_USER_POOL_ID=<pool-id>
-export AWS_REGION=<region>
-export UNIVENT_PROVISION_PASSWORD='<strong-initial-password>'
-node scripts/provision-cognito-user.js \
-  --email codecell@ves.ac.in \
-  --name 'CodeCell' \
-  --role organization
+```powershell
+$env:COGNITO_USER_POOL_ID = '<pool-id>'
+$env:AWS_REGION = '<region>'
+$securePassword = Read-Host 'Temporary account password' -AsSecureString
+$env:UNIVENT_PROVISION_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
+node scripts/provision-cognito-user.js --email 'codecell@ves.ac.in' --name 'CodeCell' --role organization
+Remove-Item Env:UNIVENT_PROVISION_PASSWORD
 ```
 
 - Use `--role admin` for platform administrators.
