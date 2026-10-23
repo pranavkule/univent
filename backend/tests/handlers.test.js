@@ -214,6 +214,46 @@ describe('POST /register', () => {
     assert.equal(res.statusCode, 401)
   })
 
+  it('rejects an organization account with 403', async () => {
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: devHeaders('organization', 'codecell@ves.ac.in', 'CodeCell'),
+      body: { eventId: 'e1', name: 'CodeCell', email: 'codecell@ves.ac.in' },
+    })
+
+    assert.equal(res.statusCode, 403)
+    assert.match(res.json.message, /students/i)
+  })
+
+  it('rejects an administrator account with 403', async () => {
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: ADMIN,
+      body: { eventId: 'e1', name: 'Demo Admin', email: 'admin@univent.demo' },
+    })
+
+    assert.equal(res.statusCode, 403)
+    assert.match(res.json.message, /students/i)
+  })
+
+  it('does not accept a body role as authorization', async () => {
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: {
+        eventId: 'e1',
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+        role: 'admin',
+        ownerEmail: 'mallory@college.edu',
+      },
+    })
+
+    assert.equal(res.statusCode, 201)
+    const stored = getStore().findRegistration('e1', 'asha@college.edu')
+    assert.equal(stored.ownerEmail, 'asha@college.edu')
+  })
+
   it('rejects a missing email with 400', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
@@ -354,6 +394,17 @@ describe('GET /registrations', () => {
   it('rejects a signed-out caller with 401', async () => {
     const res = await invoke(getRegistrations.handler, { method: 'GET', path: '/registrations' })
     assert.equal(res.statusCode, 401)
+  })
+
+  it('rejects an organization account with 403', async () => {
+    const res = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      headers: devHeaders('organization', 'codecell@ves.ac.in', 'CodeCell'),
+    })
+
+    assert.equal(res.statusCode, 403)
+    assert.match(res.json.message, /organization/i)
   })
 
   it('returns every registration to an admin', async () => {

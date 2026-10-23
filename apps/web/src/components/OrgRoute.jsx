@@ -3,8 +3,7 @@ import { useAuth } from './AuthProvider.jsx'
 
 // Organization-only gate. Signed-out users go to /signin; signed-in users
 // with any other role fall back to the events list. Frontend routing is a
-// UX convenience only — real authorization must be enforced by the backend
-// (API Gateway/Lambda) once it exists.
+// UX convenience only — API Gateway and Lambda enforce authorization.
 export default function OrgRoute({ children }) {
   const { user } = useAuth()
   const location = useLocation()

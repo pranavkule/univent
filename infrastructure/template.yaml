@@ -32,6 +32,67 @@ Globals:
         UNIVENT_DEV_AUTH: 'false'
 
 Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      UsernameAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: 'OFF'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        UnusedAccountValidityDays: 7
+      LambdaConfig:
+        PreSignUp: !GetAtt PreSignUpFunction.Arn
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AWS::StackName}-web'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  AdminsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admins
+      Description: UniVent platform administrators
+      Precedence: 1
+      UserPoolId: !Ref UserPool
+
+  OrganizationsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: organizations
+      Description: Approved organization representatives
+      Precedence: 2
+      UserPoolId: !Ref UserPool
+
   EventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -72,6 +133,20 @@ Resources:
             ProjectionType: ALL
       SSESpecification:
         SSEEnabled: true
+
+  PreSignUpRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
   GetEventsRole:
     Type: AWS::IAM::Role
@@ -184,12 +259,48 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
-      Description: UniVent HTTP API
+      Description: UniVent REST API
       EndpointConfiguration: REGIONAL
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+      GatewayResponses:
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+        ACCESS_DENIED:
+          StatusCode: 403
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
       Cors:
         AllowOrigin: "'*'"
         AllowHeaders: "'Content-Type,Authorization'"
         AllowMethods: "'GET,POST,OPTIONS'"
+
+  PreSignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Restrict student self sign-up to the configured college email domain
+      CodeUri: ../backend/functions/
+      Handler: preSignUp.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt PreSignUpRole.Arn]
+      Environment:
+        Variables:
+          ALLOWED_SIGNUP_DOMAIN: ves.ac.in
+
+  PreSignUpPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreSignUpFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
 
   GetEventsFunction:
     Type: AWS::Serverless::Function
@@ -232,11 +343,13 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /events
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   RegisterFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: POST /register - register for an event (signed-in user)
+      Description: POST /register - register for an event (student only)
       CodeUri: ../backend/functions/
       Handler: register.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt RegisterRole.Arn]
@@ -253,11 +366,13 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /register
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   GetRegistrationsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: GET /registrations - list registrations (admin sees all, others see their own)
+      Description: GET /registrations - admin sees all, students see their own, organizations are denied
       CodeUri: ../backend/functions/
       Handler: getRegistrations.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetRegistrationsRole.Arn]
@@ -274,11 +389,22 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /registrations
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
 Outputs:
   ApiUrl:
     Description: Base URL of the UniVent API
     Value: !Sub "https://${UniventApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito app client ID for the React application
+    Value: !Ref UserPoolClient
+  CognitoRegion:
+    Description: AWS region containing the Cognito User Pool
+    Value: !Ref AWS::Region
   EventsTableName:
     Description: DynamoDB events table name
     Value: !Ref EventsTable

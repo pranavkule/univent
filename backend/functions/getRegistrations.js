@@ -1,10 +1,10 @@
-// GET /registrations - list registrations (signed-in user only).
+// GET /registrations - list registrations (admin all, student own, org denied).
 //
-// Admins see every registration; any other signed-in user sees only their own
-// rows. An optional ?eventId= query parameter filters the list, and an
-// unknown event id is a 404.
+// Admins see every registration; students see only their own rows;
+// organizations are denied for now. An optional ?eventId= query parameter
+// filters the list, and an unknown event id is a 404.
 const { json, error, requestMethod, queryParams } = require('./lib/http')
-const { resolvePrincipal, isAdmin } = require('./lib/principal')
+const { ROLES, resolvePrincipal, hasRole, isAdmin } = require('./lib/principal')
 const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
 
@@ -16,6 +16,9 @@ exports.handler = async (event) => {
 
   const principal = resolvePrincipal(event)
   if (!principal.authenticated) return error(401, 'Sign in to view registrations.')
+  if (!hasRole(principal, ROLES.ADMIN, ROLES.STUDENT)) {
+    return error(403, 'Organization accounts cannot view registrations here yet.')
+  }
 
   const rawEventId = queryParams(event).eventId
   let eventId = null

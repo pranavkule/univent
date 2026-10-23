@@ -1,0 +1,13 @@
+{
+  "name": "univent-scripts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local development and operator scripts",
+  "type": "commonjs",
+  "scripts": {
+    "provision-user": "node provision-cognito-user.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.600.0"
+  }
+}

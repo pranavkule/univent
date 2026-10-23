@@ -1,8 +1,6 @@
 // DEV-ONLY demo panel — frontend mock testing, NOT production auth.
-// To remove when Amazon Cognito lands:
-//   1. Delete this file.
-//   2. Remove the `DemoAccounts` import + JSX in pages/SignIn.jsx.
-// The sign-up/sign-in flow in services/auth.js is intentionally untouched.
+// SignIn renders this only when VITE_AUTH_MODE=mock, so it is never shown in
+// a Cognito/production build.
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '../services/auth.js'
 
 export default function DemoAccounts({ onUse }) {

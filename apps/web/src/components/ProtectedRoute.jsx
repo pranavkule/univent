@@ -1,13 +1,18 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './AuthProvider.jsx'
+import { getDashboardPathForRole } from '../services/authRoles.js'
 
-// Gates a route behind mock sign-in. Signed-out users go to /signin and
-// are sent back afterwards (via location.state.from).
-export default function ProtectedRoute({ children }) {
+export default function ProtectedRoute({ children, roles = null }) {
   const { user } = useAuth()
   const location = useLocation()
+
   if (!user) {
     return <Navigate to="/signin" replace state={{ from: location.pathname }} />
   }
+
+  if (Array.isArray(roles) && roles.length > 0 && !roles.includes(user.role)) {
+    return <Navigate to={getDashboardPathForRole(user.role)} replace />
+  }
+
   return children
 }

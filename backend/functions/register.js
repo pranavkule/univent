@@ -1,4 +1,4 @@
-// POST /register - register for an event (signed-in user only).
+// POST /register - register for an event (students only).
 //
 // Ownership: the signed-in account owns the registration. email and
 // ownerEmail come from the authenticated principal, and userId comes from the
@@ -6,7 +6,7 @@
 // no ownership field is ever taken from the request body. The storage layer's
 // transaction is the sole authority for duplicate and capacity checks.
 const { json, error, requestMethod, parseBody } = require('./lib/http')
-const { resolvePrincipal } = require('./lib/principal')
+const { resolvePrincipal, isStudent } = require('./lib/principal')
 const { validateRegistrationInput, firstError } = require('./lib/validation')
 const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
@@ -33,6 +33,7 @@ exports.handler = async (event) => {
 
   const principal = resolvePrincipal(event)
   if (!principal.authenticated) return error(401, 'Sign in to register for an event.')
+  if (!isStudent(principal)) return error(403, 'Only students can register for events.')
 
   const parsed = parseBody(event)
   if (!parsed.ok) return error(400, parsed.message)

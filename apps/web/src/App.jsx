@@ -9,6 +9,7 @@ import OrgLayout from './components/OrgLayout.jsx'
 import OrgRoute from './components/OrgRoute.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import Confirmation from './pages/Confirmation.jsx'
+import ConfirmSignUp from './pages/ConfirmSignUp.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import EventDetails from './pages/EventDetails.jsx'
 import Events from './pages/Events.jsx'
@@ -43,22 +44,23 @@ export default function App() {
             <Route path="/events/:id" element={<EventDetails />} />
             <Route
               path="/events/:id/register"
-              element={<ProtectedRoute><Register /></ProtectedRoute>}
+              element={<ProtectedRoute roles={['student']}><Register /></ProtectedRoute>}
             />
             <Route path="/confirmation/:id" element={<Confirmation />} />
             <Route path="/signup" element={<SignUp />} />
+            <Route path="/confirm-signup" element={<ConfirmSignUp />} />
             <Route path="/signin" element={<SignIn />} />
             <Route
               path="/dashboard"
-              element={<ProtectedRoute><Dashboard /></ProtectedRoute>}
+              element={<ProtectedRoute roles={['student']}><Dashboard /></ProtectedRoute>}
             />
             <Route
               path="/registrations"
-              element={<ProtectedRoute><StudentRegistrations /></ProtectedRoute>}
+              element={<ProtectedRoute roles={['student']}><StudentRegistrations /></ProtectedRoute>}
             />
             <Route
               path="/profile"
-              element={<ProtectedRoute><StudentProfile /></ProtectedRoute>}
+              element={<ProtectedRoute roles={['student']}><StudentProfile /></ProtectedRoute>}
             />
             <Route
               path="/admin"

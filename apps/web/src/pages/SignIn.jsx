@@ -5,12 +5,13 @@ import DemoAccounts from '../components/DemoAccounts.jsx'
 import { validateSignInInput } from '../services/auth.js'
 
 export default function SignIn() {
-  const { signIn } = useAuth()
+  const { signIn, authMode } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const explicitFrom = location.state?.from
   const from = explicitFrom || '/events'
-  const [values, setValues] = useState({ email: '', password: '' })
+  const notice = location.state?.notice || ''
+  const [values, setValues] = useState({ email: location.state?.email || '', password: '' })
   const [errors, setErrors] = useState({})
   const [serverError, setServerError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -20,8 +21,6 @@ export default function SignIn() {
     setValues((v) => ({ ...v, [name]: value }))
   }
 
-  // DEV-ONLY helper: fills the mock demo credentials into the form.
-  // Remove with components/DemoAccounts.jsx when Cognito lands.
   function handleUseDemo(email, password) {
     setValues({ email, password })
     setErrors({})
@@ -67,7 +66,12 @@ export default function SignIn() {
   return (
     <div className="container auth-container">
       <h2>Sign in</h2>
-      <p className="muted">Mock sign-in for the prototype — use an account you created via Sign up, or a dev demo account.</p>
+      <p className="muted">
+        {authMode === 'mock'
+          ? 'Mock sign-in for the prototype — use an account you created via Sign up, or a dev demo account.'
+          : 'Sign in to register for events and manage your account.'}
+      </p>
+      {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       <div className="auth-layout">
         <div className="auth-main">
           <form className="form auth-form" onSubmit={handleSubmit} noValidate>
@@ -77,7 +81,7 @@ export default function SignIn() {
             id="signin-email" name="email" type="email" autoComplete="email" required
             aria-invalid={Boolean(errors.email)}
             aria-describedby={errors.email ? 'signin-email-error' : undefined}
-            value={values.email} onChange={handleChange} placeholder="you@college.edu"
+            value={values.email} onChange={handleChange} placeholder="you@ves.ac.in"
           />
           {errors.email && <span className="field-error" id="signin-email-error" role="alert">{errors.email}</span>}
         </div>
@@ -97,8 +101,16 @@ export default function SignIn() {
         </button>
           </form>
           <p className="muted">No account yet? <Link to="/signup" state={{ from }}>Sign up</Link></p>
+          {authMode === 'cognito' && (
+            <p className="muted">
+              Need to confirm your email?{' '}
+              <Link to="/confirm-signup" state={{ email: values.email, from }}>
+                Enter your code
+              </Link>
+            </p>
+          )}
         </div>
-        <DemoAccounts onUse={handleUseDemo} />
+        {authMode === 'mock' && <DemoAccounts onUse={handleUseDemo} />}
       </div>
     </div>
   )

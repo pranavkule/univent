@@ -39,6 +39,11 @@ function cognitoAuthorizer({ sub = 'test-sub', email = '', name = 'Test User', g
   return { claims: { sub, email, name, 'cognito:groups': groups } }
 }
 
+// Cognito authorizer claims (HTTP API JWT shape).
+function cognitoJwtAuthorizer({ sub = 'test-sub', email = '', name = 'Test User', groups = [] } = {}) {
+  return { jwt: { claims: { sub, email, name, 'cognito:groups': groups } } }
+}
+
 async function invoke(handler, options = {}) {
   const result = await handler(proxyEvent(options))
   let parsed = null
@@ -50,4 +55,4 @@ async function invoke(handler, options = {}) {
   return { statusCode: result.statusCode, headers: result.headers, body: result.body, json: parsed }
 }
 
-module.exports = { proxyEvent, devHeaders, cognitoAuthorizer, invoke }
+module.exports = { proxyEvent, devHeaders, cognitoAuthorizer, cognitoJwtAuthorizer, invoke }

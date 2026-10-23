@@ -1,8 +1,8 @@
 # API
 
-UniVent HTTP API. Implemented in Phase 3 (four Lambda handlers + API Gateway
-routes) and backed by DynamoDB in Phase 4; resources are defined in
-`infrastructure/template.yaml`.
+UniVent REST API. Implemented in Phase 3 (four Lambda handlers + API Gateway
+routes), backed by DynamoDB in Phase 4, and protected by Cognito in Phase 5;
+resources are defined in `infrastructure/template.yaml`.
 
 The shapes below are the contract the Phase 2 frontend was built against, so
 the frontend can be swapped from mock data to this API in Phase 6 without
@@ -13,19 +13,20 @@ changing any page or component.
 | ------ | ---- | ------- | ---- | ------- |
 | GET | `/events` | `getEvents.js` | Public | List all events |
 | POST | `/events` | `createEvent.js` | Admin | Create an event |
-| POST | `/register` | `register.js` | Signed-in user | Register for an event |
-| GET | `/registrations?eventId=...` | `getRegistrations.js` | Signed-in user | List registrations (filter by event) |
+| POST | `/register` | `register.js` | Student | Register for an event |
+| GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / Admin (all) | List registrations (filter by event) |
 
 ### Access rules
 - `GET /events` — public, no identity needed.
 - `POST /events` — administrator only. `401` when signed out, `403` for any
   signed-in account that is not an administrator (students and organizations).
-- `POST /register` — any signed-in user. The body email must match the
-  signed-in account. Ownership (`email`, `ownerEmail`, `userId`) is taken from
-  the authenticated principal, never from body fields.
-- `GET /registrations` — an administrator sees every registration; any other
-  signed-in user sees only their own registrations. `?eventId=` filters the
-  list for everyone.
+- `POST /register` — students only. Organizations and administrators receive
+  `403`. The body email must match the signed-in account. Ownership (`email`,
+  `ownerEmail`, `userId`) is taken from the authenticated principal, never
+  from body fields.
+- `GET /registrations` — an administrator sees every registration; a student
+  sees only their own registrations; an organization receives `403`.
+  `?eventId=` filters the list for administrators and students.
 
 ### Response envelopes
 Reads return a JSON object with one key:
@@ -75,13 +76,13 @@ Stored records also keep `ownerEmail` (normalized principal email) and `userId`
 
 Registration request:
 ```json
-{ "eventId": "e1", "name": "Asha Sharma", "email": "asha@college.edu" }
+{ "eventId": "e1", "name": "Asha Sharma", "email": "asha@ves.ac.in" }
 ```
 
 Registration response (`201`):
 ```json
 { "registrationId": "reg-9e6d8027cf7b", "eventId": "e1", "name": "Asha Sharma",
-  "email": "asha@college.edu", "createdAt": "2026-10-21T19:31:30.643Z", "status": "Confirmed" }
+  "email": "asha@ves.ac.in", "createdAt": "2026-10-21T19:31:30.643Z", "status": "Confirmed" }
 ```
 
 ## Errors
@@ -97,7 +98,7 @@ Every error is JSON with a single `message` field:
 | `201` | created |
 | `400` | bad input (missing/invalid field, malformed JSON, empty `eventId`) |
 | `401` | not signed in |
-| `403` | signed in but not allowed (non-admin creating an event, email mismatch) |
+| `403` | signed in but not allowed (non-admin creating an event, non-student registering, organization listing registrations, email mismatch) |
 | `404` | unknown event |
 | `405` | wrong HTTP method for the route |
 | `409` | duplicate registration, event full, or event counter not ready |
@@ -115,9 +116,26 @@ Access-Control-Max-Age: 600
 The origin comes from the `CORS_ORIGIN` environment variable (default `*`).
 Phase 7 pins it to the deployed S3/CloudFront origin.
 
+## Cognito identity
+The protected routes use an API Gateway `CognitoAuthorizer`. The frontend sends
+the **ID token** (not the access token) so the authorizer can pass `email`,
+`name`, and `cognito:groups` to the handlers:
+
+```http
+Authorization: Bearer <idToken>
+```
+
+Role mapping is additive with admin precedence:
+- group `admins` → `admin`;
+- otherwise group `organizations` → `organization`;
+- otherwise → `student`.
+
+API Gateway rejects a missing/invalid/expired token with `401` before Lambda
+runs. Lambda returns `403` when the authenticated role is not allowed to do the
+action. The frontend role guards are UX only.
+
 ## Local development identity
-There is no Cognito user pool yet (Phase 5), so local testing can use these
-headers:
+Without Cognito, local testing can use these headers:
 
 | Header | Example | Meaning |
 | ------ | ------- | ------- |
@@ -208,12 +226,12 @@ With a missing title: `400 {"message":"Title is required."}`.
 ```bash
 curl -X POST http://localhost:3000/register \
   -H "Content-Type: application/json" \
-  -H "x-univent-role: student" -H "x-univent-email: asha@college.edu" \
-  -d '{"eventId":"e1","name":"Asha Sharma","email":"asha@college.edu"}'
+  -H "x-univent-role: student" -H "x-univent-email: asha@ves.ac.in" \
+  -d '{"eventId":"e1","name":"Asha Sharma","email":"asha@ves.ac.in"}'
 ```
 ```json
 { "registrationId": "reg-9e6d8027cf7b", "eventId": "e1", "name": "Asha Sharma",
-  "email": "asha@college.edu", "createdAt": "2026-10-21T19:31:30.643Z", "status": "Confirmed" }
+  "email": "asha@ves.ac.in", "createdAt": "2026-10-21T19:31:30.643Z", "status": "Confirmed" }
 ```
 Status `201`. Other outcomes:
 
@@ -236,14 +254,16 @@ curl "http://localhost:3000/registrations?eventId=e1" \
 ```
 ```json
 { "registrations": [ { "registrationId": "reg-9e6d8027cf7b", "eventId": "e1",
-  "name": "Asha Sharma", "email": "asha@college.edu",
+  "name": "Asha Sharma", "email": "asha@ves.ac.in",
   "createdAt": "2026-10-21T19:31:30.643Z", "status": "Confirmed" } ] }
 ```
 Status `200`. Not signed in: `401`. Unknown `eventId`: `404`.
 
 ## Deferred to later phases
-- AWS deployment of the Phase 4 tables and IAM roles — Phase 7.
-- Cognito user pool, sign-in and the API Gateway authorizer — Phase 5.
+- AWS deployment of the Phase 4 tables, Phase 5 Cognito resources, and IAM
+  roles — Phase 7.
 - Organization-created events with an approval workflow (draft → pending →
-  published) — later phase; `POST /events` stays admin-only for now.
-- Frontend wired to this API (`services/api.js` swap) — Phase 6.
+  published) — later phase; `POST /events` stays admin-only and organization
+  access to registration data is `403` for now.
+- Frontend wired to this API (`services/api.js` swap) and sending the Cognito
+  ID token — Phase 6.

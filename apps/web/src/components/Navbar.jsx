@@ -47,6 +47,7 @@ export default function Navbar() {
   }, [accountOpen])
 
   const initial = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase()
+  const profilePath = user?.role === 'organization' ? '/org/profile' : '/profile'
 
   return (
     <header className="nav">
@@ -118,9 +119,11 @@ export default function Navbar() {
                   <p className="account-detail-name">{user.name}</p>
                   <p className="account-detail-email">{user.email}</p>
                   <span className="badge">{user.role || 'student'}</span>
-                  <NavLink to="/profile" className="btn btn-secondary btn-sm account-signout" role="menuitem" onClick={close}>
-                    View profile
-                  </NavLink>
+                  {user.role !== 'admin' && (
+                    <NavLink to={profilePath} className="btn btn-secondary btn-sm account-signout" role="menuitem" onClick={close}>
+                      View profile
+                    </NavLink>
+                  )}
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm account-signout"

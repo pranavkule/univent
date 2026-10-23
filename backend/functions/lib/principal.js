@@ -1,11 +1,10 @@
 // Identity resolution for the UniVent handlers.
 //
-// Phase 3 has no Cognito authorizer yet, so a request may carry no identity
-// at all. This module resolves the caller in two ways:
+// This module resolves the caller in two ways:
 //
-// 1. API Gateway authorizer claims (Cognito, Phase 5). Both the REST API
-//    shape (`requestContext.authorizer.claims`) and the HTTP API shape
-//    (`requestContext.authorizer.jwt.claims`) are supported.
+// 1. API Gateway Cognito authorizer claims (REST API
+//    `requestContext.authorizer.claims`, HTTP API
+//    `requestContext.authorizer.jwt.claims`).
 // 2. A LOCAL DEVELOPMENT header, used only for local testing.
 //
 // The development fallback is deliberately hard to turn on:
@@ -112,13 +111,30 @@ function resolvePrincipal(event) {
   return principalFromClaims(claimsFromEvent(event)) || principalFromDevHeaders(event) || anonymousPrincipal()
 }
 
+function hasRole(principal, ...roles) {
+  return Boolean(
+    principal && principal.authenticated && roles.includes(principal.role),
+  )
+}
+
 function isAdmin(principal) {
-  return Boolean(principal && principal.authenticated && principal.role === ROLES.ADMIN)
+  return hasRole(principal, ROLES.ADMIN)
+}
+
+function isStudent(principal) {
+  return hasRole(principal, ROLES.STUDENT)
+}
+
+function isOrganization(principal) {
+  return hasRole(principal, ROLES.ORGANIZATION)
 }
 
 module.exports = {
   ROLES,
   devAuthEnabled,
   resolvePrincipal,
+  hasRole,
   isAdmin,
+  isStudent,
+  isOrganization,
 }

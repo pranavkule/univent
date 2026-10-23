@@ -1,17 +1,15 @@
 # UniVent — Serverless Event Registration and Management System
 
-# UniVent — Serverless Event Registration and Management System
-
 UniVent is a cloud-based event registration and management application designed for colleges, universities, and organizations. It allows users to explore events, register online, and receive registration confirmations through a simple web interface.
 
-Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API and Phase 4 DynamoDB storage are implemented and verified locally; the frontend still uses mock data and browser-only mock sign-in until the Phase 5–6 integration. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
+Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API, Phase 4 DynamoDB storage, and Phase 5 Cognito authentication are implemented and verified locally. The frontend still uses browser-local mock event data until the Phase 6 API integration; auth can run in mock or Cognito mode. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
 
 ## What it does (scope)
-- Students browse college events, view details, and register (mock sign-in required).
+- Students browse college events, view details, and register after signing in.
 - Participants view and cancel their own mock registrations on a dashboard.
-- The frontend still runs on browser-local mock data; the API Gateway/Lambda
-  API and DynamoDB storage exist locally, and wiring the UI plus Cognito
-  sign-in happen in Phases 5–6.
+- The frontend uses browser-local mock event data until Phase 6; the API
+  Gateway/Lambda API, DynamoDB storage, and Cognito auth are implemented
+  locally. Deployment and live checks remain Phase 7.
 
 ## Project Overview
 
@@ -96,26 +94,28 @@ Serverless college event registration and management system built with React + V
 
 ## Docs (read in this order)
 1. `docs/architecture.md` — scope, services, how a request flows.
-2. `docs/api.md` — planned endpoints and data shapes.
+2. `docs/api.md` — routes, auth/role rules, and data shapes.
 3. `docs/aws-setup.md` — what to create in AWS and in which order.
 4. `docs/testing.md` — how we will test it.
-5. `phases.md` + `docs/phases/` — implementation roadmap (Phases 1–2 done).
+5. `phases.md` + `docs/phases/` — implementation roadmap (Phases 1–5 done locally).
 
-## Run the frontend (Phase 2, mock data)
+## Run the frontend
 ```bash
 cd apps/web
 npm install
 npm run dev      # http://localhost:5173
 ```
 Routes: `/` landing, `/events`, `/events/:id`, `/events/:id/register`
-(sign-in required), `/confirmation/:id`, `/signup`, `/signin`, `/dashboard`
-(student hub), `/registrations`, `/profile`, `/org/*` (organization role),
-`/admin/*` (admin role).
-`npm run build` + `npm run preview` verified. Mock users/registrations live
-only in this browser's localStorage — temporary prototype storage, not a
-backend. Demo accounts: student, organization (CodeCell), and admin, all with
-mock password `Demo@123`. No test suite exists yet; the production build is
-the current check.
+(student sign-in required), `/confirmation/:id`, `/signup`,
+`/confirm-signup`, `/signin`, `/dashboard` (student hub), `/registrations`,
+`/profile`, `/org/*` (organization role), `/admin/*` (admin role).
+
+Default local mode is mock auth: users and registrations stay in this browser's
+localStorage, with demo accounts for student, organization (CodeCell), and admin
+(mock password `Demo@123`). To use Cognito, copy `.env.example` to `.env.local`,
+set `VITE_AUTH_MODE=cognito` plus the pool/client/region values, and install
+dependencies. `npm test` covers auth validation, role mapping, and the mock
+flow; `npm run build` is the production check.
 
 ## Request flow
 **Request flow:**
@@ -132,9 +132,9 @@ the current check.
 7. The application displays the result, including a registration confirmation when successful.
 
 ## Status
-Phases 1–4 complete locally (foundation, mock-data frontend, API, DynamoDB
-storage). No AWS deployment yet; Phases 5–8 cover Cognito, integration,
-deployment and final testing. See `phases.md`.
+Phases 1–5 complete locally (foundation, mock-data frontend, API, DynamoDB
+storage, Cognito auth). No AWS deployment yet; Phase 6 wires the UI to the API,
+and Phase 7 deploys and runs the live auth checks. See `phases.md`.
 
 Amazon Cognito supports authentication and protected operations, while CloudWatch provides backend execution logs for troubleshooting.
 
@@ -218,8 +218,12 @@ Once the backend and infrastructure files are implemented:
 1. Configure the AWS CLI with an appropriately authorized account.
 2. Review the AWS resources defined in `infrastructure/template.yaml`.
 3. Configure the required environment variables.
-4. Install the backend dependencies: `npm --prefix backend/functions install`.
+4. Install dependencies: `npm --prefix backend/functions install` and,
+   only if provisioning users, `npm --prefix scripts install`.
 5. Build and test the application using the project's documented commands.
+6. Record the stack outputs `ApiUrl`, `UserPoolId`, `UserPoolClientId`, and
+   `CognitoRegion`; use the Cognito values in the frontend `.env.local`.
+   Create privileged users only with `scripts/provision-cognito-user.js`.
 
 Example AWS CLI configuration:
 
@@ -273,25 +277,31 @@ Refer to [`phases.md`](phases.md) for current progress, deliverables, and comple
 
 ## Testing
 
-Testing will cover the following areas as the corresponding features are implemented:
+Locally verified so far:
 
-- Frontend rendering and form validation.
-- Event retrieval and registration API endpoints.
-- Successful and invalid registration requests.
-- Persistence and retrieval of DynamoDB records.
-- Authentication and organizer authorization.
-- Error handling and unauthorized API requests.
-- Deployed application availability.
-- Lambda execution logs in CloudWatch.
+- Frontend auth validation, role mapping, and mock sign-up/sign-in
+  (`npm --prefix apps/web test`).
+- Event retrieval and registration API endpoints plus the student/org/admin
+  role matrix (`npm --prefix backend test`).
+- Persistence, concurrency, duplicate prevention, and owner-scoped reads
+  against DynamoDB Local (`npm --prefix backend run test:integration`).
+- SAM template validation/build and the production frontend build.
 
-See [`docs/testing.md`](docs/testing.md) for the actual test procedures and results.
+Deployment-dependent checks remain: real Cognito email confirmation, live
+group claims, API Gateway `401`/`403` CORS, token refresh, and CloudWatch logs.
+
+See [`docs/testing.md`](docs/testing.md) for commands and results.
 
 ## Security Considerations
 
 - Use IAM roles with least-privilege permissions.
 - Protect organizer-only operations on the backend.
+- Enforce the role matrix in Lambda, not only in React route guards.
+- Restrict student self sign-up to exact `@ves.ac.in` addresses.
+- Require email-code confirmation before first sign-in.
+- Provision admin/organization accounts with the operator script, not public sign-up.
 - Validate and sanitize user input.
-- Keep credentials and secrets out of source control.
+- Keep credentials and secrets out of source control; never log provisioning passwords.
 - Configure API CORS rules for the intended frontend origin.
 - Avoid exposing sensitive participant information.
 - Review AWS resource permissions and costs before deployment.
