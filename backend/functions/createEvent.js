@@ -22,7 +22,7 @@ exports.handler = async (event) => {
   if (Object.keys(errors).length > 0) return error(400, firstError(errors))
 
   try {
-    const created = getStore().createEvent(values)
+    const created = await getStore().createEvent(values)
     return json(201, publicEvent(created))
   } catch (err) {
     console.error('createEvent failed:', err && err.message)

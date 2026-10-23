@@ -1,7 +1,8 @@
 # API
 
 UniVent HTTP API. Implemented in Phase 3 (four Lambda handlers + API Gateway
-routes defined in `infrastructure/template.yaml`).
+routes) and backed by DynamoDB in Phase 4; resources are defined in
+`infrastructure/template.yaml`.
 
 The shapes below are the contract the Phase 2 frontend was built against, so
 the frontend can be swapped from mock data to this API in Phase 6 without
@@ -20,7 +21,8 @@ changing any page or component.
 - `POST /events` — administrator only. `401` when signed out, `403` for any
   signed-in account that is not an administrator (students and organizations).
 - `POST /register` — any signed-in user. The body email must match the
-  signed-in account, so nobody can register somebody else's address.
+  signed-in account. Ownership (`email`, `ownerEmail`, `userId`) is taken from
+  the authenticated principal, never from body fields.
 - `GET /registrations` — an administrator sees every registration; any other
   signed-in user sees only their own registrations. `?eventId=` filters the
   list for everyone.
@@ -66,7 +68,10 @@ Creates return the created object directly (`201`).
 | `name` | string | yes | 2–100 characters |
 | `email` | string | yes | must match the signed-in account |
 | `createdAt` | string | yes | ISO timestamp |
-| `status` | string | yes | `Confirmed` (Phase 3 has a single status) |
+| `status` | string | yes | `Confirmed` (single status for now) |
+
+Stored records also keep `ownerEmail` (normalized principal email) and `userId`
+(principal `sub`) for ownership checks; neither internal field is returned.
 
 Registration request:
 ```json
@@ -95,7 +100,7 @@ Every error is JSON with a single `message` field:
 | `403` | signed in but not allowed (non-admin creating an event, email mismatch) |
 | `404` | unknown event |
 | `405` | wrong HTTP method for the route |
-| `409` | duplicate registration, or the event is full |
+| `409` | duplicate registration, event full, or event counter not ready |
 | `500` | unexpected server error |
 
 ## CORS
@@ -130,42 +135,35 @@ client-supplied roles are ignored. The deployed template sets
 When the API runs with a Cognito authorizer (Phase 5), the identity is taken
 from the authorizer claims instead and the headers are not used.
 
-## Storage (temporary)
-Phase 3 stores data in memory inside the Lambda process
-(`backend/functions/lib/memoryStore.js`). This is **not** persistent storage:
-the data is lost when the container is recycled and it is not shared between
-Lambda functions or concurrent instances. Consequently, a created event is
-not visible to the separate `GET /events` function, and registrations created
-by `POST /register` are not visible to `GET /registrations`. Duplicate and
-capacity checks are only reliable inside a single warm `RegisterFunction`
-container. DynamoDB replaces this in Phase 4 through the same storage
-interface (`backend/functions/lib/store.js`).
+## Storage
+`UNIVENT_STORE` selects the implementation behind
+`backend/functions/lib/store.js`:
+
+- `memory` (default) — seeded in-process store used by unit tests and the quick
+  local server. Not persistent and not shared between Lambda instances.
+- `dynamodb` — the deployed mode. Reads/writes the `Events` and
+  `Registrations` tables. Registration is atomic via `TransactWriteItems`;
+  duplicate and capacity checks are enforced by conditions, not prechecks.
+
+The deployed SAM template sets `UNIVENT_STORE=dynamodb`, table names and the
+`OwnerEmailIndex` name. Table keys and operational details are in
+`docs/phases/PHASE-04-DYNAMODB.md`.
 
 ## Run it locally
-`sam local start-api` needs the SAM CLI and a running Docker daemon. To enable
-development identity headers for local SAM route tests, pass a local-only
-environment file (do not use it for deployment):
+`sam local start-api` needs the SAM CLI and a running Docker daemon. The
+template now points Lambda at DynamoDB, so a local SAM run needs either real
+dev tables or DynamoDB Local plus local-only environment overrides (table names,
+`DYNAMODB_ENDPOINT`, `AWS_REGION`, and dummy `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` values). Do not use local identity or dummy credential
+settings in a deployment.
 
-```json
-{
-  "CreateEventFunction": { "UNIVENT_DEV_AUTH": "true" },
-  "RegisterFunction": { "UNIVENT_DEV_AUTH": "true" },
-  "GetRegistrationsFunction": { "UNIVENT_DEV_AUTH": "true" }
-}
-```
-
-Start SAM with warm containers so the temporary in-memory registration store
-can retain state between requests:
-
-```bash
-sam local start-api --template-file infrastructure/template.yaml --env-vars local-env.json --warm-containers EAGER
-```
-
-For a quick local run without SAM or Docker:
+For a quick local run without SAM, Docker, or AWS:
 
 ```bash
 UNIVENT_DEV_AUTH=true node scripts/dev-api.js   # http://localhost:3000
 ```
+
+This uses the seeded in-memory store and requires no DynamoDB credentials.
 
 ## Sample requests and responses (captured from the local server)
 
@@ -228,6 +226,7 @@ Status `201`. Other outcomes:
 | email of another account | `403` | `{"message":"Email must match the signed-in account."}` |
 | already registered | `409` | `{"message":"This email is already registered for the event."}` |
 | event full | `409` | `{"message":"This event is full."}` |
+| counter not ready | `409` | `{"message":"This event is not ready for registration."}` |
 | malformed JSON | `400` | `{"message":"Request body must be valid JSON."}` |
 
 ### GET /registrations
@@ -243,7 +242,7 @@ curl "http://localhost:3000/registrations?eventId=e1" \
 Status `200`. Not signed in: `401`. Unknown `eventId`: `404`.
 
 ## Deferred to later phases
-- DynamoDB tables and persistent storage — Phase 4.
+- AWS deployment of the Phase 4 tables and IAM roles — Phase 7.
 - Cognito user pool, sign-in and the API Gateway authorizer — Phase 5.
 - Organization-created events with an approval workflow (draft → pending →
   published) — later phase; `POST /events` stays admin-only for now.

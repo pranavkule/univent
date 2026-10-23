@@ -1,23 +1,29 @@
-// Temporary in-memory storage (Phase 3).
+// In-memory storage used by unit tests and the quick local server.
 //
-// IMPORTANT: this is NOT persistent storage. The maps live in the Lambda
-// process memory, so the data is lost when the container is recycled and it
-// is NOT shared between concurrent Lambda instances. Duplicate and capacity
-// checks are therefore reliable only inside a single warm container.
-//
-// Phase 4 replaces this file with a DynamoDB-backed store that implements the
-// same interface (lib/store.js). The handlers do not change.
+// IMPORTANT: this is NOT persistent storage. The maps live in the process
+// memory, so data is lost on restart and is not shared between instances.
+// DynamoDB storage (lib/dynamoStore.js) is selected in the deployed template
+// through UNIVENT_STORE=dynamodb and implements the same interface.
 const { makeId } = require('./ids')
 const { seedEvents } = require('./seedEvents')
+const { CODES, StoreError } = require('./storeError')
 
 const events = new Map()
 const registrations = new Map()
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase()
+}
 
 function seed() {
   events.clear()
   registrations.clear()
   for (const event of seedEvents) {
-    events.set(event.eventId, { ...event })
+    events.set(event.eventId, {
+      ...event,
+      registeredCount: 0,
+      registrationCounterReady: true,
+    })
   }
 }
 
@@ -34,6 +40,8 @@ function createEvent(values) {
   const event = {
     eventId: makeId('evt'),
     ...values,
+    registeredCount: 0,
+    registrationCounterReady: true,
     createdAt: new Date().toISOString(),
   }
   events.set(event.eventId, event)
@@ -42,7 +50,15 @@ function createEvent(values) {
 
 function listRegistrations(filter = {}) {
   const all = Array.from(registrations.values())
-  const filtered = filter.eventId ? all.filter((row) => row.eventId === filter.eventId) : all
+  const eventId = filter.eventId ? String(filter.eventId).trim() : ''
+  const hasOwnerFilter = filter.ownerEmail !== undefined && filter.ownerEmail !== null
+  const ownerEmail = hasOwnerFilter ? normalizeEmail(filter.ownerEmail) : ''
+
+  if (hasOwnerFilter && !ownerEmail) return []
+
+  let filtered = all
+  if (eventId) filtered = filtered.filter((row) => row.eventId === eventId)
+  if (ownerEmail) filtered = filtered.filter((row) => row.ownerEmail === ownerEmail)
   return filtered.map((row) => ({ ...row }))
 }
 
@@ -55,7 +71,7 @@ function countRegistrations(eventId) {
 }
 
 function findRegistration(eventId, email) {
-  const target = String(email || '').toLowerCase()
+  const target = normalizeEmail(email)
   for (const row of registrations.values()) {
     if (row.eventId === eventId && row.ownerEmail === target) return { ...row }
   }
@@ -63,18 +79,36 @@ function findRegistration(eventId, email) {
 }
 
 function createRegistration({ eventId, name, email, userId = null }) {
-  const ownerEmail = String(email || '').toLowerCase()
+  const ownerEmail = normalizeEmail(email)
+  const event = events.get(eventId)
+  if (!event) throw new StoreError(CODES.EVENT_NOT_FOUND)
+
+  if (findRegistration(eventId, ownerEmail)) {
+    throw new StoreError(CODES.DUPLICATE_REGISTRATION)
+  }
+
+  if (event.capacity !== undefined && event.capacity !== null) {
+    const counterReady = event.registrationCounterReady === true
+    const hasCount = Number.isInteger(event.registeredCount)
+    if (!counterReady || !hasCount) throw new StoreError(CODES.EVENT_NOT_READY)
+    if (event.registeredCount >= Number(event.capacity)) {
+      throw new StoreError(CODES.EVENT_FULL)
+    }
+  }
+
   const registration = {
     registrationId: makeId('reg'),
     eventId,
     name,
     email: ownerEmail,
     ownerEmail,
-    userId,
+    userId: userId === undefined ? null : userId,
     createdAt: new Date().toISOString(),
     status: 'Confirmed',
   }
   registrations.set(registration.registrationId, registration)
+  event.registeredCount = (Number.isInteger(event.registeredCount) ? event.registeredCount : 0) + 1
+  event.registrationCounterReady = true
   return { ...registration }
 }
 

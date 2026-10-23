@@ -10,7 +10,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const events = getStore().listEvents().map(publicEvent)
+    const events = (await getStore().listEvents()).map(publicEvent)
     return json(200, { events })
   } catch (err) {
     console.error('getEvents failed:', err && err.message)

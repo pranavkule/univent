@@ -4,13 +4,14 @@
 
 UniVent is a cloud-based event registration and management application designed for colleges, universities, and organizations. It allows users to explore events, register online, and receive registration confirmations through a simple web interface.
 
-Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The current Phase 2 frontend prototype uses mock data and browser-only mock sign-in. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
+Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API and Phase 4 DynamoDB storage are implemented and verified locally; the frontend still uses mock data and browser-only mock sign-in until the Phase 5–6 integration. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
 
 ## What it does (scope)
 - Students browse college events, view details, and register (mock sign-in required).
 - Participants view and cancel their own mock registrations on a dashboard.
-- Everything runs on browser-local mock data for now; real backend (API Gateway,
-  Lambda, DynamoDB) and real sign-in (Cognito) come in later phases.
+- The frontend still runs on browser-local mock data; the API Gateway/Lambda
+  API and DynamoDB storage exist locally, and wiring the UI plus Cognito
+  sign-in happen in Phases 5–6.
 
 ## Project Overview
 
@@ -131,8 +132,9 @@ the current check.
 7. The application displays the result, including a registration confirmation when successful.
 
 ## Status
-Phases 1–2 completed (foundation + mock-data frontend). Phases 3–8 not started.
-See `phases.md`.
+Phases 1–4 complete locally (foundation, mock-data frontend, API, DynamoDB
+storage). No AWS deployment yet; Phases 5–8 cover Cognito, integration,
+deployment and final testing. See `phases.md`.
 
 Amazon Cognito supports authentication and protected operations, while CloudWatch provides backend execution logs for troubleshooting.
 
@@ -216,7 +218,7 @@ Once the backend and infrastructure files are implemented:
 1. Configure the AWS CLI with an appropriately authorized account.
 2. Review the AWS resources defined in `infrastructure/template.yaml`.
 3. Configure the required environment variables.
-4. Install the backend dependencies.
+4. Install the backend dependencies: `npm --prefix backend/functions install`.
 5. Build and test the application using the project's documented commands.
 
 Example AWS CLI configuration:

@@ -2,10 +2,22 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: UniVent SAM template
 
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Default: 'arn:aws:iam::000000000000:role/univent-auto-created'
+    Description: >-
+      Optional existing Lambda execution role ARN (for example the AWS Academy
+      LabRole). Leave the default to create per-function least-privilege roles.
+
+Conditions:
+  UseSuppliedRole: !Not [!Equals [!Ref LambdaExecutionRoleArn, 'arn:aws:iam::000000000000:role/univent-auto-created']]
+  CreateExecutionRoles: !Equals [!Ref LambdaExecutionRoleArn, 'arn:aws:iam::000000000000:role/univent-auto-created']
+
 Globals:
   Function:
     Timeout: 10
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
     MemorySize: 256
     Architectures:
       - x86_64
@@ -18,19 +30,162 @@ Globals:
         # The handlers also refuse those headers whenever AWS_EXECUTION_ENV
         # is set, which is always the case inside AWS Lambda.
         UNIVENT_DEV_AUTH: 'false'
-        # Storage backend. 'memory' is the temporary Phase 3 store; Phase 4
-        # adds the DynamoDB-backed implementation.
-        UNIVENT_STORE: 'memory'
 
 Resources:
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  RegistrationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: ownerEmail
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+        - AttributeName: email
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: OwnerEmailIndex
+          KeySchema:
+            - AttributeName: ownerEmail
+              KeyType: HASH
+            - AttributeName: eventId
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+
+  GetEventsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GetEventsTable
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt EventsTable.Arn
+
+  CreateEventRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CreateEventTable
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+
+  RegisterRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RegisterEventAndRegistration
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt RegistrationsTable.Arn
+
+  GetRegistrationsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GetRegistrationsTables
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt RegistrationsTable.Arn
+                  - !Sub '${RegistrationsTable.Arn}/index/OwnerEmailIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt RegistrationsTable.Arn
+
   UniventApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
       Description: UniVent HTTP API
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
+      EndpointConfiguration: REGIONAL
       Cors:
         AllowOrigin: "'*'"
         AllowHeaders: "'Content-Type,Authorization'"
@@ -42,6 +197,13 @@ Resources:
       Description: GET /events - list all events (public)
       CodeUri: ../backend/functions/
       Handler: getEvents.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetEventsRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
       Events:
         ListEvents:
           Type: Api
@@ -56,6 +218,13 @@ Resources:
       Description: POST /events - create an event (admin only)
       CodeUri: ../backend/functions/
       Handler: createEvent.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt CreateEventRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
       Events:
         CreateEvent:
           Type: Api
@@ -70,6 +239,13 @@ Resources:
       Description: POST /register - register for an event (signed-in user)
       CodeUri: ../backend/functions/
       Handler: register.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt RegisterRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
       Events:
         Register:
           Type: Api
@@ -84,6 +260,13 @@ Resources:
       Description: GET /registrations - list registrations (admin sees all, others see their own)
       CodeUri: ../backend/functions/
       Handler: getRegistrations.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetRegistrationsRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
       Events:
         ListRegistrations:
           Type: Api
@@ -96,3 +279,12 @@ Outputs:
   ApiUrl:
     Description: Base URL of the UniVent API
     Value: !Sub "https://${UniventApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  EventsTableName:
+    Description: DynamoDB events table name
+    Value: !Ref EventsTable
+  RegistrationsTableName:
+    Description: DynamoDB registrations table name
+    Value: !Ref RegistrationsTable
+  RegistrationsOwnerIndexName:
+    Description: GSI used for a signed-in user's registrations
+    Value: OwnerEmailIndex

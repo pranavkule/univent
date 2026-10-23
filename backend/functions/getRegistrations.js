@@ -26,14 +26,18 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore()
-    if (eventId && !store.getEvent(eventId)) return error(404, 'Event not found.')
+    if (eventId && !(await store.getEvent(eventId))) return error(404, 'Event not found.')
 
-    let registrations = store.listRegistrations(eventId ? { eventId } : {})
-    if (!isAdmin(principal)) {
-      registrations = principal.email
-        ? registrations.filter((row) => row.ownerEmail === principal.email)
-        : []
+    const ownerEmail = isAdmin(principal) ? null : principal.email
+    if (!isAdmin(principal) && !ownerEmail) {
+      return json(200, { registrations: [] })
     }
+
+    const filter = {}
+    if (eventId) filter.eventId = eventId
+    if (ownerEmail) filter.ownerEmail = ownerEmail
+
+    const registrations = await store.listRegistrations(filter)
     return json(200, { registrations: registrations.map(publicRegistration) })
   } catch (err) {
     console.error('getRegistrations failed:', err && err.message)

@@ -4,7 +4,7 @@ const { describe, it, before, beforeEach, after } = require('node:test')
 const assert = require('node:assert/strict')
 
 const { invoke, devHeaders, cognitoAuthorizer } = require('./helpers')
-const { resetStore } = require('../functions/lib/store')
+const { getStore, resetStore } = require('../functions/lib/store')
 
 const getEvents = require('../functions/getEvents')
 const createEvent = require('../functions/createEvent')
@@ -274,6 +274,40 @@ describe('POST /register', () => {
     assert.ok(res.json.createdAt)
   })
 
+  it('stores trusted principal identity instead of body ownership fields', async () => {
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      authorizer: cognitoAuthorizer({
+        sub: 'cognito-asha',
+        email: 'ASHA@College.edu',
+        name: 'Asha Sharma',
+      }),
+      body: {
+        eventId: 'e1',
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+        ownerEmail: 'mallory@college.edu',
+        userId: 'spoofed-user',
+      },
+    })
+
+    assert.equal(res.statusCode, 201)
+    const stored = getStore().findRegistration('e1', 'asha@college.edu')
+    assert.equal(stored.ownerEmail, 'asha@college.edu')
+    assert.equal(stored.userId, 'cognito-asha')
+  })
+
+  it('rejects a principal without an email address with 403', async () => {
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      authorizer: cognitoAuthorizer({ sub: 'no-email', email: '' }),
+      body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
+    })
+
+    assert.equal(res.statusCode, 403)
+    assert.match(res.json.message, /no email/i)
+  })
+
   it('rejects a duplicate registration with 409', async () => {
     await invoke(register.handler, {
       method: 'POST',
@@ -365,6 +399,41 @@ describe('GET /registrations', () => {
     assert.equal(res.statusCode, 200)
     assert.equal(res.json.registrations.length, 1)
     assert.equal(res.json.registrations[0].email, 'asha@college.edu')
+  })
+
+  it('keeps the owner filter when a student also filters by eventId', async () => {
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
+    })
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_B,
+      body: { eventId: 'e1', name: 'Rohan Patil', email: 'rohan@college.edu' },
+    })
+
+    const res = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      headers: STUDENT_A,
+      query: { eventId: 'e1' },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.json.registrations.length, 1)
+    assert.equal(res.json.registrations[0].email, 'asha@college.edu')
+  })
+
+  it('returns an empty list for a signed-in account without an email', async () => {
+    const res = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      authorizer: cognitoAuthorizer({ sub: 'no-email', email: '' }),
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.json.registrations, [])
   })
 
   it('filters by the eventId query parameter', async () => {

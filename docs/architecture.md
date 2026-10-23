@@ -26,10 +26,19 @@ Browser (S3)
 Example: Register button → `POST /register` → `register.js` → writes to
 `Registrations` table → returns confirmation JSON.
 
-## Data sketch
-- Event: `eventId`, `title`, `date`, `venue`, `description`, `capacity`, `createdAt`.
-- Registration: `registrationId`, `eventId`, `name`, `email`, `createdAt`.
-- Tables and keys are finalized in Phase 4 (`docs/phases/PHASE-04-DYNAMODB.md`).
+## Data (Phase 4)
+- `Events` table: partition key `eventId`. Stores the event fields plus internal
+  `registeredCount` and `registrationCounterReady`.
+- `Registrations` table: partition key `eventId`, sort key `email` (one
+  registration per account per event). GSI `OwnerEmailIndex`
+  (`ownerEmail` + `eventId`) serves a signed-in user's registration list.
+- Registration is one `TransactWriteItems` call: increment the event counter
+  with a conditional capacity check and insert the registration. A conditional
+  failure maps to duplicate, full, not-ready, or missing-event responses.
+- `email` / `ownerEmail` come from the authenticated principal; `userId` stores
+  the principal subject for later phases.
+- Full schema, access patterns, reconciliation and IAM details:
+  `docs/phases/PHASE-04-DYNAMODB.md`.
 
 ## Why serverless (viva answer)
 "No servers to manage, pay-per-use, and each piece scales on its own.

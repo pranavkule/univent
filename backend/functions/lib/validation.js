@@ -1,5 +1,5 @@
-// Input validation rules. Kept out of the handlers so the rules survive the
-// switch from the temporary in-memory store to DynamoDB (Phase 4).
+// Input validation rules. Kept out of the handlers so request validation is
+// independent of the selected storage implementation.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/

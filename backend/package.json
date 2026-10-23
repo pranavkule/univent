@@ -4,6 +4,9 @@
   "description": "UniVent Lambda handlers",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test tests/handlers.test.js tests/dynamoStore.test.js",
+    "test:integration": "node --test tests/integration/dynamoStore.integration.test.js",
+    "seed:dynamodb": "node functions/scripts/seedDynamoDB.js",
+    "reconcile:dynamodb": "node functions/scripts/reconcileRegistrationCounts.js"
   }
 }
