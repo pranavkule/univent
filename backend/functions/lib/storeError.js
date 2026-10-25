@@ -6,6 +6,7 @@ const CODES = {
   EVENT_FULL: 'EVENT_FULL',
   DUPLICATE_REGISTRATION: 'DUPLICATE_REGISTRATION',
   REGISTRATION_CONFLICT: 'REGISTRATION_CONFLICT',
+  CAPACITY_BELOW_REGISTRATIONS: 'CAPACITY_BELOW_REGISTRATIONS',
 }
 
 const MESSAGES = {
@@ -14,6 +15,8 @@ const MESSAGES = {
   [CODES.EVENT_FULL]: 'This event is full.',
   [CODES.DUPLICATE_REGISTRATION]: 'This email is already registered for the event.',
   [CODES.REGISTRATION_CONFLICT]: 'Unable to complete the registration right now.',
+  [CODES.CAPACITY_BELOW_REGISTRATIONS]:
+    'Capacity cannot be lower than the number of confirmed registrations.',
 }
 
 class StoreError extends Error {

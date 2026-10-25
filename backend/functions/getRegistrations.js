@@ -1,10 +1,16 @@
-// GET /registrations - list registrations (admin all, student own, org denied).
+// GET /registrations - list registrations by administrator, student, or event owner.
 //
 // Admins see every registration; students see only their own rows;
-// organizations are denied for now. An optional ?eventId= query parameter
-// filters the list, and an unknown event id is a 404.
+// organizations see registrations for their own events. An optional
+// ?eventId= query parameter filters the list.
 const { json, error, requestMethod, queryParams } = require('./lib/http')
-const { ROLES, resolvePrincipal, hasRole, isAdmin } = require('./lib/principal')
+const {
+  ROLES,
+  resolvePrincipal,
+  hasRole,
+  isAdmin,
+  isOrganization,
+} = require('./lib/principal')
 const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
 
@@ -16,8 +22,11 @@ exports.handler = async (event) => {
 
   const principal = resolvePrincipal(event)
   if (!principal.authenticated) return error(401, 'Sign in to view registrations.')
-  if (!hasRole(principal, ROLES.ADMIN, ROLES.STUDENT)) {
-    return error(403, 'Organization accounts cannot view registrations here yet.')
+  if (!hasRole(principal, ROLES.ADMIN, ROLES.STUDENT, ROLES.ORGANIZATION)) {
+    return error(403, 'This account cannot view registrations.')
+  }
+  if (isOrganization(principal) && !principal.sub) {
+    return error(403, 'The organization account has no trusted user identifier.')
   }
 
   const rawEventId = queryParams(event).eventId
@@ -29,7 +38,23 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore()
-    if (eventId && !(await store.getEvent(eventId))) return error(404, 'Event not found.')
+    if (eventId) {
+      const eventRecord = await store.getEvent(eventId)
+      if (!eventRecord) return error(404, 'Event not found.')
+      if (isOrganization(principal) && eventRecord.ownerSub !== principal.sub) {
+        return error(403, 'You can only view registrations for your organization events.')
+      }
+    }
+
+    if (isOrganization(principal)) {
+      const ownedEvents = eventId
+        ? [{ eventId }]
+        : await store.listEventsByOwner(principal.sub)
+      const registrations = (await Promise.all(
+        ownedEvents.map((ownedEvent) => store.listRegistrations({ eventId: ownedEvent.eventId })),
+      )).flat()
+      return json(200, { registrations: registrations.map(publicRegistration) })
+    }
 
     const ownerEmail = isAdmin(principal) ? null : principal.email
     if (!isAdmin(principal) && !ownerEmail) {

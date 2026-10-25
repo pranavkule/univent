@@ -5,6 +5,7 @@ function proxyEvent({
   path = '/events',
   body = null,
   query = null,
+  pathParameters = null,
   headers = {},
   authorizer = null,
 } = {}) {
@@ -16,7 +17,7 @@ function proxyEvent({
     multiValueHeaders: {},
     queryStringParameters: query,
     multiValueQueryStringParameters: null,
-    pathParameters: null,
+    pathParameters,
     stageVariables: null,
     requestContext: { requestId: 'local-test-request', authorizer },
     body: body === null ? null : typeof body === 'string' ? body : JSON.stringify(body),

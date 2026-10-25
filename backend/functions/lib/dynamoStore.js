@@ -17,11 +17,13 @@ const {
   QueryCommand,
   ScanCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } = require('@aws-sdk/lib-dynamodb')
 const { makeId } = require('./ids')
 const { CODES, StoreError } = require('./storeError')
 
 const OWNER_INDEX_DEFAULT = 'OwnerEmailIndex'
+const EVENT_OWNER_INDEX_DEFAULT = 'OrganizationOwnerIndex'
 const MAX_TRANSACTION_ATTEMPTS = 5
 const BASE_RETRY_DELAY_MS = 25
 
@@ -63,6 +65,8 @@ function createDynamoStore(options = {}) {
   const eventsTable = options.eventsTable || process.env.EVENTS_TABLE
   const registrationsTable = options.registrationsTable || process.env.REGISTRATIONS_TABLE
   const ownerIndex = options.ownerIndex || process.env.REGISTRATIONS_OWNER_INDEX || OWNER_INDEX_DEFAULT
+  const eventOwnerIndex =
+    options.eventOwnerIndex || process.env.EVENTS_OWNER_INDEX || EVENT_OWNER_INDEX_DEFAULT
   const pageLimit = options.pageLimit || null
   const maxAttempts = options.maxTransactionAttempts || MAX_TRANSACTION_ATTEMPTS
   const retryBaseDelayMs =
@@ -138,10 +142,11 @@ function createDynamoStore(options = {}) {
     return result.Item || null
   }
 
-  async function createEvent(values) {
+  async function createEvent(values, { ownerSub = null } = {}) {
     const event = {
       eventId: makeId('evt'),
       ...values,
+      ...(ownerSub ? { ownerSub } : {}),
       [REGISTERED_COUNT]: 0,
       [COUNTER_READY]: true,
       createdAt: new Date().toISOString(),
@@ -157,6 +162,94 @@ function createDynamoStore(options = {}) {
     )
 
     return { ...event }
+  }
+
+  async function listEventsByOwner(ownerSub) {
+    if (!ownerSub) return []
+    const items = await queryAll(() => ({
+      TableName: eventsTable,
+      IndexName: eventOwnerIndex,
+      KeyConditionExpression: '#ownerSub = :ownerSub',
+      ExpressionAttributeNames: { '#ownerSub': 'ownerSub' },
+      ExpressionAttributeValues: { ':ownerSub': ownerSub },
+    }))
+    return items.sort((left, right) => {
+      const byDate = String(left.date || '').localeCompare(String(right.date || ''))
+      if (byDate !== 0) return byDate
+      return String(left.eventId || '').localeCompare(String(right.eventId || ''))
+    })
+  }
+
+  async function updateEvent(eventId, values, { ownerSub = null } = {}) {
+    const current = await getEvent(eventId)
+    if (!current) return null
+    if (ownerSub && current.ownerSub !== ownerSub) return false
+    if (
+      Number.isInteger(current[REGISTERED_COUNT]) &&
+      values.capacity < current[REGISTERED_COUNT]
+    ) {
+      throw new StoreError(CODES.CAPACITY_BELOW_REGISTRATIONS)
+    }
+
+    const names = { '#eventId': 'eventId', '#count': REGISTERED_COUNT }
+    const attributeValues = { ':capacity': values.capacity }
+    const setExpressions = []
+    const removeExpressions = []
+    let index = 0
+    for (const [key, value] of Object.entries(values)) {
+      const nameKey = `#field${index}`
+      names[nameKey] = key
+      if (value === null) {
+        removeExpressions.push(nameKey)
+      } else {
+        const valueKey = `:value${index}`
+        attributeValues[valueKey] = value
+        setExpressions.push(`${nameKey} = ${valueKey}`)
+      }
+      index += 1
+    }
+    names['#updatedAt'] = 'updatedAt'
+    attributeValues[':updatedAt'] = new Date().toISOString()
+    setExpressions.push('#updatedAt = :updatedAt')
+
+    const expressions = [`SET ${setExpressions.join(', ')}`]
+    if (removeExpressions.length > 0) expressions.push(`REMOVE ${removeExpressions.join(', ')}`)
+    const conditions = [
+      'attribute_exists(#eventId)',
+      '(attribute_not_exists(#count) OR #count <= :capacity)',
+    ]
+    if (ownerSub) {
+      names['#ownerSub'] = 'ownerSub'
+      attributeValues[':ownerSub'] = ownerSub
+      conditions.push('#ownerSub = :ownerSub')
+    }
+
+    try {
+      const result = await ddb.send(
+        new UpdateCommand({
+          TableName: eventsTable,
+          Key: { eventId },
+          UpdateExpression: expressions.join(' '),
+          ConditionExpression: conditions.join(' AND '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: attributeValues,
+          ReturnValues: 'ALL_NEW',
+        }),
+      )
+      return result.Attributes || null
+    } catch (err) {
+      if (!err || err.name !== 'ConditionalCheckFailedException') throw err
+      const latest = await getEvent(eventId)
+      if (!latest) return null
+      if (ownerSub && latest.ownerSub !== ownerSub) return false
+      if (
+        Number.isInteger(latest[REGISTERED_COUNT]) &&
+        values.capacity < latest[REGISTERED_COUNT]
+      ) {
+        throw new StoreError(CODES.CAPACITY_BELOW_REGISTRATIONS)
+      }
+      throw err
+    }
   }
 
   async function listRegistrations(filter = {}) {
@@ -348,6 +441,8 @@ function createDynamoStore(options = {}) {
     listEvents,
     getEvent,
     createEvent,
+    listEventsByOwner,
+    updateEvent,
     listRegistrations,
     countRegistrations,
     findRegistration,

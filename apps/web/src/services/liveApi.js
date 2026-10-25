@@ -78,6 +78,22 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     return request('/events', { method: 'POST', body: input, auth: true })
   }
 
+  async function listOrganizationEvents() {
+    const payload = await request('/organization/events', { auth: true })
+    if (!Array.isArray(payload?.events)) {
+      throw new ApiError('The server returned an invalid organization events response.', 502)
+    }
+    return payload.events
+  }
+
+  async function updateEvent(eventId, input) {
+    return request(`/events/${encodeURIComponent(eventId)}`, {
+      method: 'PUT',
+      body: input,
+      auth: true,
+    })
+  }
+
   async function createRegistration({ eventId, name, email }) {
     return request('/register', {
       method: 'POST',
@@ -114,6 +130,8 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     listEvents,
     getEvent,
     createEvent,
+    listOrganizationEvents,
+    updateEvent,
     createRegistration,
     listRegistrations,
     getRegistration,

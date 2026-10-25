@@ -53,7 +53,7 @@ export default function AdminOrganizations() {
     try {
       await setOrganizationStatus(email, status, reasonValue)
       await refresh()
-      setNotice(`Organization ${status}.`)
+      setNotice(`Organization ${status}. Demo only — stored in this browser, not in AWS.`)
       setRejectTarget(null)
       setReason('')
     } catch (err) {

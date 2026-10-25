@@ -1,17 +1,21 @@
 # Phase 7 — AWS Deployment and Monitoring
 
-Status: not started. This guide is a deployment plan, not evidence of a live
-deployment. Do not run the resource-changing commands until the AWS Academy
-preflight and permissions checks pass.
+The project owner reports an existing deployment in `us-east-1` and successful
+live student login/registration. This guide does not independently verify AWS.
+The organization-event changes in the current template have not been deployed;
+check AWS Academy permissions and review the change set before updating the
+existing stack.
 
 ## What the repository currently defines
 
 - `infrastructure/template.yaml` creates a regional API Gateway **REST API**
-  (`AWS::Serverless::Api`, stage `Prod`), five Node.js 22 Lambda functions,
-  two on-demand DynamoDB tables, the `OwnerEmailIndex` GSI, a Cognito user pool,
+  (`AWS::Serverless::Api`, stage `Prod`), Node.js 22 Lambda functions,
+  two on-demand DynamoDB tables, the `OwnerEmailIndex` and
+  `OrganizationOwnerIndex` GSIs, a Cognito user pool,
   a public app client, two groups, and the PreSignUp trigger.
-- The four API paths are `GET /events` (public), `POST /events` (Cognito),
-  `POST /register` (Cognito), and `GET /registrations` (Cognito). The API
+- The API paths are `GET /events` (public), `POST /events`,
+  `GET /organization/events`, `PUT /events/{eventId}`, `POST /register`, and
+  `GET /registrations` (Cognito-protected except public `GET /events`). The API
   output includes `/Prod`.
 - Lambda table names and `UNIVENT_STORE=dynamodb` are wired from CloudFormation
   references. Outputs provide the API URL, Cognito IDs/region, and table/index
@@ -19,7 +23,9 @@ preflight and permissions checks pass.
 - The functions package the AWS SDK v3 DynamoDB dependencies from
   `backend/functions/package-lock.json`. The runtime is `nodejs22.x`.
 - DynamoDB uses on-demand billing and server-side encryption. The registration
-  table has `eventId`/`email` keys and the `ownerEmail`/`eventId` GSI.
+  table has `eventId`/`email` keys and the `ownerEmail`/`eventId` GSI. The
+  Events table has an `ownerSub`/`eventId` GSI; it is sparse, so existing
+  ownerless seeded events remain intact and Admin-managed.
 - Cognito self-sign-up checks the exact `ves.ac.in` domain and requires email
   verification. The browser uses the Cognito SDK directly; it does not use a
   Hosted UI, so callback/logout URLs are not currently part of this flow.
@@ -33,18 +39,19 @@ preflight and permissions checks pass.
   a supplied Academy role must also allow the needed DynamoDB and Lambda Logs
   actions.
 
-## Blockers and decisions before deployment
+## Blockers and decisions before updating/deploying
 
 1. **AWS Academy credentials and account:** Start the Learner Lab and refresh
-   its temporary credentials. The PowerShell environment used for this audit
-   currently fails `aws sts get-caller-identity` with `InvalidClientTokenId`;
-   no AWS deployment was attempted. Confirm the identity and permitted region
-   before doing anything that creates resources.
+   its temporary credentials. Confirm the identity and permitted region
+   before updating the existing stack. No AWS change was performed for this
+   repository task.
 2. **Execution role:** The default SAM path creates per-function roles and
    requires IAM role/policy creation and `iam:PassRole`. Academy accounts may
    restrict these actions. If using `LabRole`, verify its ARN, trust
    relationship, DynamoDB table/index access, CloudWatch Logs permissions, and
-   that the caller can pass it. Supplying it uses the same role for all
+   that the caller can pass it. It must allow the new owner-index queries and
+   event updates, plus `dynamodb:TransactWriteItems` on both Events and
+   Registrations for student registration. Supplying it uses the same role for all
    functions and gives up the template's per-function least privilege.
 3. **Hosting choice and URL:** The repository has no S3/CloudFront resources.
    Choose a bucket/hosting method and configure SPA fallback for React
@@ -56,7 +63,12 @@ preflight and permissions checks pass.
    restricted classroom demo. To pin CORS to S3/CloudFront, the SAM template
    must first expose and use a configurable allowed origin; the current
    template cannot do this through a parameter.
-5. **Monitoring:** Lambda logs can be emitted through the basic execution
+5. **Organization account:** An Admin must verify and provision an
+   organization representative into the Cognito `organizations` group using
+   the procedure in `docs/aws-setup.md`. There is no in-app approval portal.
+   New events publish immediately; moderation and cancellation are not
+   available.
+6. **Monitoring:** Lambda logs can be emitted through the basic execution
    policy, but API Gateway access logs, retention, and alarms are not
    configured. Confirm Academy permissions and decide whether to add these
    resources before claiming Phase 7 monitoring complete.
@@ -193,6 +205,8 @@ matching Cognito outputs:
 - Protected `GET /registrations`, `POST /register`, and `POST /events` reject
   missing/invalid tokens with `401`; verify the response is readable from the
   frontend origin (CORS).
+- Protected `GET /organization/events` and `PUT /events/{eventId}` also reject
+  missing/invalid tokens with `401`.
 - Sign up a student at the allowed domain, receive/enter the email code, sign
   in, and confirm the app sends the ID token. Check student registration
   history is limited to that student.
@@ -201,8 +215,16 @@ matching Cognito outputs:
   duplicate registration returns `409`, and a second student gets `409` when
   the event is full. Verify an admin can list all registrations and a student
   cannot create events.
-- If testing organization authorization, provision an organization account
-  and confirm it receives `403` on current registration routes.
+- Provision an organization account through the Admin-controlled process in
+  `docs/aws-setup.md`. Verify it can create and list its own events, update
+  one of them, and view registrations for those events. A second organization
+  must receive `403` when updating the first organization's event or filtering
+  registrations by that event. Verify a student receives `403` on
+  organization-only routes and an Admin can list/edit events and view all
+  registrations.
+- Verify events created before the ownership GSI have not been rewritten and
+  are not included in organization lists; public browsing and student
+  registration/capacity/duplicate checks still work.
 - Check each Lambda's `/aws/lambda/<function-name>` CloudWatch log group for
   invocation/error records. API Gateway access logs are not available until
   explicitly configured. Avoid logging tokens or passwords.

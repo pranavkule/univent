@@ -4,8 +4,8 @@ import { useAuth } from '../components/AuthProvider.jsx'
 import { API_MODE, cancelRegistration, listEvents, listRegistrations } from '../services/api.js'
 
 // My Registrations: the signed-in student's own registrations only.
-// Cancellation is allowed for upcoming events and always asks first.
-// Mock data only — stored in this browser, not in AWS.
+// Cancellation is allowed for upcoming events and always asks first; it is
+// available only in mock mode because the live API has no cancel endpoint.
 function isUpcoming(date) {
   if (!date) return true
   return date >= new Date().toISOString().slice(0, 10)
@@ -17,7 +17,7 @@ export default function StudentRegistrations() {
   const [registrations, setRegistrations] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState(null)
   const [statusFilter, setStatusFilter] = useState('All')
   const [cancelling, setCancelling] = useState(null)
 
@@ -62,13 +62,13 @@ export default function StudentRegistrations() {
     const label = evt ? `"${evt.title}"` : registration.registrationId
     if (!window.confirm(`Cancel your registration for ${label}? This cannot be undone.`)) return
     setCancelling(registration.registrationId)
-    setNotice('')
+    setNotice(null)
     try {
       await cancelRegistration(registration.registrationId)
       setRegistrations((regs) => regs.filter((r) => r.registrationId !== registration.registrationId))
-      setNotice('Registration cancelled.')
+      setNotice({ type: 'ok', text: 'Registration cancelled. Demo only — removed from this browser, not in AWS.' })
     } catch (err) {
-      setNotice(err.message || 'Could not cancel the registration.')
+      setNotice({ type: 'error', text: err.message || 'Could not cancel the registration.' })
     } finally {
       setCancelling(null)
     }
@@ -98,7 +98,14 @@ export default function StudentRegistrations() {
       <p className="muted">
         Signed in as {user?.name} ({user?.email}).
       </p>
-      {notice && <div className="alert alert-ok" role="status">{notice}</div>}
+      {notice && (
+        <div
+          className={`alert alert-${notice.type === 'error' ? 'error' : 'ok'}`}
+          role={notice.type === 'error' ? 'alert' : 'status'}
+        >
+          {notice.text}
+        </div>
+      )}
       {mine.length === 0 ? (
         <div className="alert alert-empty">
           You have not registered for any event yet.

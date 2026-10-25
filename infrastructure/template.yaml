@@ -100,9 +100,20 @@ Resources:
       AttributeDefinitions:
         - AttributeName: eventId
           AttributeType: S
+        - AttributeName: ownerSub
+          AttributeType: S
       KeySchema:
         - AttributeName: eventId
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: OrganizationOwnerIndex
+          KeySchema:
+            - AttributeName: ownerSub
+              KeyType: HASH
+            - AttributeName: eventId
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       SSESpecification:
         SSEEnabled: true
 
@@ -170,6 +181,10 @@ Resources:
                 Action:
                   - dynamodb:Scan
                 Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
 
   CreateEventRole:
     Type: AWS::IAM::Role
@@ -185,14 +200,20 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: CreateEventTable
+        - PolicyName: ManageEventsTable
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
                 Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
 
   RegisterRole:
     Type: AWS::IAM::Role
@@ -216,10 +237,12 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
+                  - dynamodb:TransactWriteItems
                 Resource: !GetAtt EventsTable.Arn
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
+                  - dynamodb:TransactWriteItems
                 Resource: !GetAtt RegistrationsTable.Arn
 
   GetRegistrationsRole:
@@ -244,6 +267,10 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                 Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
               - Effect: Allow
                 Action:
                   - dynamodb:Query
@@ -272,16 +299,18 @@ Resources:
             Headers:
               Access-Control-Allow-Origin: "'*'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,OPTIONS'"
         ACCESS_DENIED:
           StatusCode: 403
           ResponseParameters:
             Headers:
               Access-Control-Allow-Origin: "'*'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,OPTIONS'"
       Cors:
         AllowOrigin: "'*'"
         AllowHeaders: "'Content-Type,Authorization'"
-        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowMethods: "'GET,POST,PUT,OPTIONS'"
 
   PreSignUpFunction:
     Type: AWS::Serverless::Function
@@ -326,7 +355,7 @@ Resources:
   CreateEventFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: POST /events - create an event (admin only)
+      Description: POST /events - create an event (admin or organization)
       CodeUri: ../backend/functions/
       Handler: createEvent.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt CreateEventRole.Arn]
@@ -343,6 +372,52 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /events
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  OrganizationEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: GET /organization/events - list organization-owned events
+      CodeUri: ../backend/functions/
+      Handler: getOrganizationEvents.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetEventsRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          EVENTS_OWNER_INDEX: OrganizationOwnerIndex
+      Events:
+        ListOrganizationEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /organization/events
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  UpdateEventFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: PUT /events/{eventId} - update an event by its owner or an admin
+      CodeUri: ../backend/functions/
+      Handler: updateEvent.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt CreateEventRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          EVENTS_OWNER_INDEX: OrganizationOwnerIndex
+      Events:
+        UpdateEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /events/{eventId}
+            Method: PUT
             Auth:
               Authorizer: CognitoAuthorizer
 
@@ -372,7 +447,7 @@ Resources:
   GetRegistrationsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: GET /registrations - admin sees all, students see their own, organizations are denied
+      Description: GET /registrations - scoped to the caller's role and event ownership
       CodeUri: ../backend/functions/
       Handler: getRegistrations.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetRegistrationsRole.Arn]
@@ -382,6 +457,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
+          EVENTS_OWNER_INDEX: OrganizationOwnerIndex
       Events:
         ListRegistrations:
           Type: Api
@@ -414,3 +490,6 @@ Outputs:
   RegistrationsOwnerIndexName:
     Description: GSI used for a signed-in user's registrations
     Value: OwnerEmailIndex
+  EventsOwnerIndexName:
+    Description: GSI used to list events owned by an organization
+    Value: OrganizationOwnerIndex

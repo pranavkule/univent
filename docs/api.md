@@ -1,32 +1,60 @@
 # API
 
-UniVent REST API. Implemented in Phase 3 (four Lambda handlers + API Gateway
-routes), backed by DynamoDB in Phase 4, and protected by Cognito in Phase 5;
-resources are defined in `infrastructure/template.yaml`.
+UniVent REST API. The four original routes are extended with organization
+event listing and updates. DynamoDB storage and Cognito authorization are
+defined in `infrastructure/template.yaml`.
 
-The shapes below are the contract the Phase 2 frontend was built against, so
-the frontend can be swapped from mock data to this API in Phase 6 without
-changing any page or component.
+The frontend uses this contract in live mode; browser-local demo mode remains
+available separately.
 
 ## Routes
 | Method | Path | Handler | Auth | Purpose |
 | ------ | ---- | ------- | ---- | ------- |
-| GET | `/events` | `getEvents.js` | Public | List all events |
-| POST | `/events` | `createEvent.js` | Admin | Create an event |
+| GET | `/events` | `getEvents.js` | Public | List all public events |
+| POST | `/events` | `createEvent.js` | Admin / Organization | Create an event |
+| GET | `/organization/events` | `getOrganizationEvents.js` | Organization (own) / Admin (all) | List organization-owned events |
+| PUT | `/events/{eventId}` | `updateEvent.js` | Organization (own) / Admin (all) | Update an event |
 | POST | `/register` | `register.js` | Student | Register for an event |
-| GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / Admin (all) | List registrations (filter by event) |
+| GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / Organization (own events) / Admin (all) | List registrations (optionally filter by event) |
 
 ### Access rules
 - `GET /events` — public, no identity needed.
-- `POST /events` — administrator only. `401` when signed out, `403` for any
-  signed-in account that is not an administrator (students and organizations).
+- `POST /events` — administrators and organization accounts may create
+  events. Organization ownership is saved from the verified Cognito `sub`
+  claim; request-body owner fields are ignored. New organization events are
+  published immediately.
+- `GET /organization/events` — an organization sees only events indexed to
+  its verified Cognito `sub`; administrators see all events. Students receive
+  `403`.
+- `PUT /events/{eventId}` — administrators may update any event; an
+  organization may update only an event whose stored `ownerSub` matches its
+  verified Cognito `sub`. Other organizations receive `403`. Capacity cannot
+  be reduced below the stored confirmed-registration counter (`409`).
 - `POST /register` — students only. Organizations and administrators receive
   `403`. The body email must match the signed-in account. Ownership (`email`,
   `ownerEmail`, `userId`) is taken from the authenticated principal, never
   from body fields.
 - `GET /registrations` — an administrator sees every registration; a student
-  sees only their own registrations; an organization receives `403`.
-  `?eventId=` filters the list for administrators and students.
+  sees only their own registrations; an organization sees registrations for
+  its own events only. An organization filtering by another event receives
+  `403`. `?eventId=` filters the list for each allowed role.
+
+### Organization event ownership and lifecycle
+
+New organization-owned event records store `ownerSub`, taken only from the
+Cognito authorizer claim. The field is not returned by the API. The
+`OrganizationOwnerIndex` GSI on the Events table lists those records. Existing
+seeded/admin events do not have `ownerSub`; they remain unchanged and
+Admin-managed, and are not retroactively assigned to an organization based on
+the display-only `organizer` field.
+`ownerSub` identifies a Cognito user, so each organization Cognito account is
+an independent owner. This setup does not yet provide a shared organization ID
+for multiple representatives to manage the same events.
+
+The live organization workflow supports create, list, edit, and viewing
+registrations for owned events. Creating publishes the event immediately.
+There is no event cancellation, moderation/approval workflow, organization
+profile management, or in-app organization approval portal in this API.
 
 ### Response envelopes
 Reads return a JSON object with one key:
@@ -99,10 +127,10 @@ Every error is JSON with a single `message` field:
 | `201` | created |
 | `400` | bad input (missing/invalid field, malformed JSON, empty `eventId`) |
 | `401` | not signed in |
-| `403` | signed in but not allowed (non-admin creating an event, non-student registering, organization listing registrations, email mismatch) |
+| `403` | signed in but not allowed (role restriction, cross-organization event access, email mismatch) |
 | `404` | unknown event |
 | `405` | wrong HTTP method for the route |
-| `409` | duplicate registration, event full, or event counter not ready |
+| `409` | duplicate registration, event full/counter not ready, or capacity reduction below current registrations |
 | `500` | unexpected server error |
 
 ## CORS
@@ -111,7 +139,7 @@ can call the API:
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Headers: Content-Type,Authorization
-Access-Control-Allow-Methods: GET,POST,OPTIONS
+Access-Control-Allow-Methods: GET,POST,PUT,OPTIONS
 Access-Control-Max-Age: 600
 ```
 The origin comes from the `CORS_ORIGIN` environment variable (default `*`).
@@ -164,9 +192,19 @@ from the authorizer claims instead and the headers are not used.
   `Registrations` tables. Registration is atomic via `TransactWriteItems`;
   duplicate and capacity checks are enforced by conditions, not prechecks.
 
-The deployed SAM template sets `UNIVENT_STORE=dynamodb`, table names and the
-`OwnerEmailIndex` name. Table keys and operational details are in
+The deployed SAM template sets `UNIVENT_STORE=dynamodb`, table names,
+`OwnerEmailIndex`, and `OrganizationOwnerIndex`. The latter is a sparse GSI:
+only records written with `ownerSub` appear in it. Adding the index does not
+rewrite existing items. Table keys and operational details are in
 `docs/phases/PHASE-04-DYNAMODB.md`.
+
+Organization accounts are provisioned by an administrator, not through an
+in-app approval portal. Verify the organization and representative using the
+college's normal process, then use the existing
+`scripts/provision-cognito-user.js --role organization` operator workflow to
+create the Cognito user or explicitly add the `organizations` group to a
+confirmed existing user. Group membership is the authorization source; do
+not accept a client-supplied role or ownership identifier.
 
 ## Run it locally
 `sam local start-api` needs the SAM CLI and a running Docker daemon. The
@@ -196,7 +234,7 @@ Content-Type: application/json
 Cache-Control: no-store
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Headers: Content-Type,Authorization
-Access-Control-Allow-Methods: GET,POST,OPTIONS
+Access-Control-Allow-Methods: GET,POST,PUT,OPTIONS
 Access-Control-Max-Age: 600
 ```
 ```json
@@ -206,7 +244,7 @@ Access-Control-Max-Age: 600
   "startTime": "18:00", "endTime": "23:59", "regDeadline": "2026-11-01" } ] }
 ```
 
-### POST /events (admin)
+### POST /events (admin or organization)
 ```bash
 curl -X POST http://localhost:3000/events \
   -H "Content-Type: application/json" \
@@ -220,7 +258,7 @@ curl -X POST http://localhost:3000/events \
   "regDeadline": "2026-12-04", "createdAt": "2026-10-21T19:31:29.729Z" }
 ```
 Status `201`. Without an identity: `401 {"message":"Sign in to create an event."}`.
-As a student: `403 {"message":"Only administrators can create events."}`.
+As a student: `403`. Organization ownership comes from Cognito, not the body.
 With a missing title: `400 {"message":"Title is required."}`.
 
 ### POST /register

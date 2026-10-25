@@ -150,6 +150,31 @@ describe('live API transport', () => {
     assert.equal(calls[0].init.headers.Authorization, 'Bearer id-token')
   })
 
+  it('lists organization events and updates an event with Cognito authorization', async () => {
+    const calls = []
+    const api = createLiveApi({
+      baseUrl: 'https://api.example.test',
+      getAuthHeaders: cognitoHeaders,
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        return url.endsWith('/organization/events')
+          ? jsonResponse(200, { events: [{ eventId: 'evt-1', title: 'Owned Event' }] })
+          : jsonResponse(200, { eventId: 'evt/1', title: 'Changed' })
+      },
+    })
+
+    assert.deepEqual(await api.listOrganizationEvents(), [{ eventId: 'evt-1', title: 'Owned Event' }])
+    const updated = await api.updateEvent('evt/1', { title: 'Changed' })
+
+    assert.equal(calls[0].url, 'https://api.example.test/organization/events')
+    assert.equal(calls[0].init.headers.Authorization, (await cognitoHeaders()).Authorization)
+    assert.equal(calls[1].url, 'https://api.example.test/events/evt%2F1')
+    assert.equal(calls[1].init.method, 'PUT')
+    assert.equal(calls[1].init.headers.Authorization, (await cognitoHeaders()).Authorization)
+    assert.deepEqual(JSON.parse(calls[1].init.body), { title: 'Changed' })
+    assert.equal(updated.title, 'Changed')
+  })
+
   it('surfaces backend messages and status codes', async () => {
     const api = createLiveApi({
       baseUrl: 'https://api.example.test',

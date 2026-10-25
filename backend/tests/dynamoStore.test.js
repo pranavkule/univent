@@ -276,11 +276,88 @@ describe('DynamoDB store', () => {
     const fake = new FakeClient(() => ({}))
     const store = makeStore(fake)
 
-    const event = await store.createEvent({ title: 'Cloud Meetup', date: '2026-12-01' })
+    const event = await store.createEvent(
+      { title: 'Cloud Meetup', date: '2026-12-01' },
+      { ownerSub: 'trusted-cognito-sub' },
+    )
 
     assert.equal(event[REGISTERED_COUNT], 0)
     assert.equal(event[COUNTER_READY], true)
     assert.equal(fake.calls[0].input.Item[REGISTERED_COUNT], 0)
+    assert.equal(fake.calls[0].input.Item.ownerSub, 'trusted-cognito-sub')
+  })
+
+  it('queries organization events by the trusted owner-sub index', async () => {
+    const fake = new FakeClient(() => ({ Items: [{ eventId: 'evt-1', date: '2026-12-01' }] }))
+    const store = makeStore(fake, { eventOwnerIndex: 'OrganizationOwnerIndex' })
+
+    const events = await store.listEventsByOwner('cognito-sub')
+
+    assert.equal(events[0].eventId, 'evt-1')
+    assert.equal(fake.calls[0].input.IndexName, 'OrganizationOwnerIndex')
+    assert.equal(fake.calls[0].input.ExpressionAttributeValues[':ownerSub'], 'cognito-sub')
+  })
+
+  it('updates an owned event with an atomic owner and capacity condition', async () => {
+    const fake = new FakeClient((command) => {
+      if (command.constructor.name === 'GetCommand') {
+        return { Item: { eventId: 'evt-1', ownerSub: 'owner-a', registeredCount: 2 } }
+      }
+      if (command.constructor.name === 'UpdateCommand') {
+        return {
+          Attributes: {
+            eventId: 'evt-1',
+            ownerSub: 'owner-a',
+            title: 'Changed',
+            capacity: 5,
+          },
+        }
+      }
+      throw new Error(`Unexpected command: ${command.constructor.name}`)
+    })
+    const store = makeStore(fake)
+
+    const updated = await store.updateEvent(
+      'evt-1',
+      { title: 'Changed', capacity: 5, description: null },
+      { ownerSub: 'owner-a' },
+    )
+
+    assert.equal(updated.title, 'Changed')
+    const input = fake.calls[1].input
+    assert.match(input.ConditionExpression, /#ownerSub = :ownerSub/)
+    assert.match(input.ConditionExpression, /#count <= :capacity/)
+    assert.match(input.UpdateExpression, /REMOVE #field2/)
+    assert.equal(input.ExpressionAttributeValues[':ownerSub'], 'owner-a')
+  })
+
+  it('does not issue an update when the requested organization is not the owner', async () => {
+    const fake = new FakeClient(() => ({
+      Item: { eventId: 'evt-1', ownerSub: 'owner-a', registeredCount: 0 },
+    }))
+    const store = makeStore(fake)
+
+    const result = await store.updateEvent(
+      'evt-1',
+      { title: 'Changed', capacity: 5 },
+      { ownerSub: 'owner-b' },
+    )
+
+    assert.equal(result, false)
+    assert.equal(fake.calls.length, 1)
+  })
+
+  it('refuses to lower capacity below the current counter', async () => {
+    const fake = new FakeClient(() => ({
+      Item: { eventId: 'evt-1', ownerSub: 'owner-a', registeredCount: 3 },
+    }))
+    const store = makeStore(fake)
+
+    await assert.rejects(
+      store.updateEvent('evt-1', { title: 'Changed', capacity: 2 }, { ownerSub: 'owner-a' }),
+      (err) => err.code === CODES.CAPACITY_BELOW_REGISTRATIONS,
+    )
+    assert.equal(fake.calls.length, 1)
   })
 
   it('refuses to reset DynamoDB storage in place', () => {

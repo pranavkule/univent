@@ -10,6 +10,7 @@ const { resolvePrincipal, isStudent } = require('./lib/principal')
 const { validateRegistrationInput, firstError } = require('./lib/validation')
 const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
+const { registrationClosedReason } = require('./lib/eventTiming')
 const { CODES, StoreError } = require('./lib/storeError')
 
 function storeErrorResponse(err) {
@@ -51,10 +52,14 @@ exports.handler = async (event) => {
   try {
     const store = getStore()
 
-    // Existence check only. Duplicate and capacity enforcement happens in the
-    // storage transaction, which is authoritative under concurrency.
-    if (!(await store.getEvent(values.eventId))) return error(404, 'Event not found.')
+    const eventRecord = await store.getEvent(values.eventId)
+    if (!eventRecord) return error(404, 'Event not found.')
 
+    const closedReason = registrationClosedReason(eventRecord)
+    if (closedReason) return error(409, closedReason)
+
+    // Duplicate and capacity enforcement happens in the storage transaction,
+    // which is authoritative under concurrency.
     const registration = await store.createRegistration({
       eventId: values.eventId,
       name: values.name,

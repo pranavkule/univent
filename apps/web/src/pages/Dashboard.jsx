@@ -7,7 +7,6 @@ import { sortByDate } from '../services/eventFilter.js'
 
 // Student Dashboard: welcome, summary cards, upcoming events, quick links.
 // Registrations live under My Registrations (/registrations).
-// Mock data only — stored in this browser, not in AWS.
 function todayStr() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -49,7 +48,7 @@ export default function Dashboard() {
     return events.filter((e) => (e.date || '') >= today)
   }, [events])
 
-  const attended = useMemo(() => {
+  const pastRegistrations = useMemo(() => {
     const today = todayStr()
     const pastIds = new Set(events.filter((e) => (e.date || '') < today).map((e) => e.eventId))
     return mine.filter((r) => pastIds.has(r.eventId))
@@ -88,8 +87,8 @@ export default function Dashboard() {
           <span className="org-stat-label">My Registrations</span>
         </div>
         <div className="org-stat" role="listitem">
-          <span className="org-stat-value">{attended.length}</span>
-          <span className="org-stat-label">Attended Events</span>
+          <span className="org-stat-value">{pastRegistrations.length}</span>
+          <span className="org-stat-label">Past Registrations</span>
         </div>
       </div>
 

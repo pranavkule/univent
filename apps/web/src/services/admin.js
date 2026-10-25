@@ -16,13 +16,16 @@
 // internals with fetch() against API Gateway/Lambda/DynamoDB without
 // rewriting the UI.
 
-import { API_MODE, listEvents, listRegistrations } from './api.js'
+import { listEvents, listRegistrations } from './api.js'
 import { listMockUsers } from './auth.js'
 import { listAllOrgEvents } from './orgEvents.js'
 import { listOrganizations } from './organizations.js'
 
+// Org event management is always the browser-local demo workflow, so the
+// admin workspace reads it in both mock and live API modes. Public/system
+// events and registrations still follow the API seam.
 function mockOrgEvents() {
-  return API_MODE === 'mock' ? listAllOrgEvents() : Promise.resolve([])
+  return listAllOrgEvents()
 }
 
 export async function getPlatformSummary() {

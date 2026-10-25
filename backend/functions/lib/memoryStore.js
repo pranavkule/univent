@@ -36,16 +36,39 @@ function getEvent(eventId) {
   return event ? { ...event } : null
 }
 
-function createEvent(values) {
+function createEvent(values, { ownerSub = null } = {}) {
   const event = {
     eventId: makeId('evt'),
     ...values,
+    ...(ownerSub ? { ownerSub } : {}),
     registeredCount: 0,
     registrationCounterReady: true,
     createdAt: new Date().toISOString(),
   }
   events.set(event.eventId, event)
   return { ...event }
+}
+
+function listEventsByOwner(ownerSub) {
+  return Array.from(events.values())
+    .filter((event) => event.ownerSub === ownerSub)
+    .map((event) => ({ ...event }))
+}
+
+function updateEvent(eventId, values, { ownerSub = null } = {}) {
+  const event = events.get(eventId)
+  if (!event) return null
+  if (ownerSub && event.ownerSub !== ownerSub) return false
+  if (Number.isInteger(event.registeredCount) && values.capacity < event.registeredCount) {
+    throw new StoreError(CODES.CAPACITY_BELOW_REGISTRATIONS)
+  }
+
+  const updated = { ...event, ...values, updatedAt: new Date().toISOString() }
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null) delete updated[key]
+  }
+  events.set(eventId, updated)
+  return { ...updated }
 }
 
 function listRegistrations(filter = {}) {
@@ -118,6 +141,8 @@ function createMemoryStore() {
     listEvents,
     getEvent,
     createEvent,
+    listEventsByOwner,
+    updateEvent,
     listRegistrations,
     countRegistrations,
     findRegistration,

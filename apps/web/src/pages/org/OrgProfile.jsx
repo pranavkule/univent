@@ -52,7 +52,7 @@ export default function OrgProfile() {
       const updated = await updateOrganization(user.email, values)
       setOrg(updated)
       setEditing(false)
-      setNotice('Profile updated.')
+      setNotice('Profile updated. Demo only — stored in this browser, not in AWS.')
     } catch (err) {
       if (err.fields) setFieldErrors(err.fields)
       setServerError(err.message || 'Could not save the profile.')

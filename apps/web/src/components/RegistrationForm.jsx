@@ -48,10 +48,11 @@ export default function RegistrationForm({ eventId, onSubmit, submitting, server
           type="email"
           autoComplete="email"
           required
+          readOnly
           aria-invalid={Boolean(errors.email)}
           aria-describedby={errors.email ? 'reg-email-error' : undefined}
           value={values.email}
-          onChange={handleChange}
+          title="Email is tied to your signed-in account"
           placeholder="you@college.edu"
         />
         {errors.email && <span className="field-error" id="reg-email-error" role="alert">{errors.email}</span>}

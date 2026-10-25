@@ -1,21 +1,15 @@
-// MOCK ORG EVENTS — Phase 2 prototype only (same limits as services/api.js).
-// ---------------------------------------------------------------------------
-// Frontend-only event management for approved organizations. Stored in this
-// browser's localStorage; nothing is persisted to AWS. Statuses model the
-// future approval flow: draft → pending → published, with rejected /
-// cancelled as terminal states set by Admin action (simulated here) or by
-// cancelling a live submission. Approval itself is an Admin concern.
+// Organization event service. Mock mode keeps the browser-local demo workflow;
+// live mode delegates ownership and persistence to the authenticated API.
 //
 // Event shape extends docs/api.md with mock-only management fields:
 //   { eventId, title, date, venue, description, capacity, category,
 //     orgEmail, orgName, status, startTime, endTime, regDeadline,
 //     bannerUrl, createdAt, updatedAt }
 //
-// Seam: pages import only the functions below. Phase 6 can replace the
-// internals with fetch() against API Gateway/Lambda/DynamoDB without
-// rewriting the UI.
+// The live API currently publishes organization events immediately and does not
+// implement moderation or cancellation.
 
-import { ApiError, listMockRegistrations } from './api.js'
+import { API_MODE, ApiError, createEvent, listMockRegistrations, listOrganizationEvents, listRegistrations, updateEvent } from './api.js'
 import { eventCategories as mockCategories } from './eventCategories.js'
 
 const ORG_EVENTS_KEY = 'univent.org-events.v1'
@@ -192,12 +186,22 @@ function cleanInput(input) {
 
 // Only events owned by this organization. Never returns other orgs' events.
 export async function listOrgEvents(orgEmail) {
+  if (API_MODE === 'live') {
+    const events = await listOrganizationEvents()
+    return events.map((event) => ({ ...event, status: 'published' }))
+  }
   await delay()
   const clean = (orgEmail || '').trim().toLowerCase()
   return loadOrgEvents().filter((e) => e.orgEmail.toLowerCase() === clean).map((e) => ({ ...e }))
 }
 
 export async function getOrgEvent(orgEmail, eventId) {
+  if (API_MODE === 'live') {
+    const events = await listOrganizationEvents()
+    const event = events.find((row) => row.eventId === eventId)
+    if (!event) throw new ApiError('Event not found.', 404)
+    return { ...event, status: 'published' }
+  }
   await delay()
   const clean = (orgEmail || '').trim().toLowerCase()
   const event = loadOrgEvents().find((e) => e.eventId === eventId)
@@ -207,6 +211,17 @@ export async function getOrgEvent(orgEmail, eventId) {
 }
 
 export async function createOrgEvent(orgEmail, orgName, input, { submit = false } = {}) {
+  if (API_MODE === 'live') {
+    const clean = cleanInput(input)
+    const errors = validateOrgEventInput(clean)
+    if (Object.keys(errors).length > 0) {
+      const err = new ApiError(Object.values(errors)[0], 400)
+      err.fields = errors
+      throw err
+    }
+    const created = await createEvent(clean)
+    return { ...created, status: 'published' }
+  }
   await delay()
   const clean = cleanInput(input)
   const errors = validateOrgEventInput(clean)
@@ -233,10 +248,22 @@ export async function createOrgEvent(orgEmail, orgName, input, { submit = false 
 const EDITABLE_STATUSES = ['draft', 'rejected', 'pending']
 
 export function isEditableStatus(status) {
+  if (API_MODE === 'live') return true
   return EDITABLE_STATUSES.includes(status)
 }
 
 export async function updateOrgEvent(orgEmail, eventId, input, { submit = false } = {}) {
+  if (API_MODE === 'live') {
+    const clean = cleanInput(input)
+    const errors = validateOrgEventInput(clean)
+    if (Object.keys(errors).length > 0) {
+      const err = new ApiError(Object.values(errors)[0], 400)
+      err.fields = errors
+      throw err
+    }
+    const updated = await updateEvent(eventId, clean)
+    return { ...updated, status: 'published' }
+  }
   await delay()
   const event = await getOrgEventNoDelay(orgEmail, eventId)
   if (!isEditableStatus(event.status)) {
@@ -296,6 +323,7 @@ export async function cancelOrgEvent(orgEmail, eventId) {
 // Registrations scoped to this organization's events only. Participant rows
 // for other organizations' events are never included.
 export async function listOrgRegistrations(orgEmail) {
+  if (API_MODE === 'live') return listRegistrations()
   const events = await listOrgEvents(orgEmail)
   const ids = new Set(events.map((e) => e.eventId))
   const regs = await listMockRegistrations()

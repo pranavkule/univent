@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../components/AuthProvider.jsx'
-import OrgStatusBadge from '../../components/OrgStatusBadge.jsx'
+import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
 import { eventCategories as mockCategories } from '../../services/eventCategories.js'
 import { createOrgEvent, getOrgEvent, isEditableStatus, updateOrgEvent } from '../../services/orgEvents.js'
+import { API_MODE } from '../../services/api.js'
 
 const EMPTY = {
   title: '',
@@ -20,6 +21,16 @@ const EMPTY = {
 
 // Shared create/edit form. New events are saved as drafts or submitted for
 // admin approval; edits preserve status unless resubmitted. Mock only.
+function saveNotice(event, submitted) {
+  if (API_MODE === 'live') {
+    return `"${event.title}" was saved to AWS and is publicly available.`
+  }
+  const demo = ' Demo only — stored in this browser, not in AWS.'
+  if (submitted) return `Event submitted for admin approval.${demo}`
+  if (event.status === 'draft') return `Draft saved.${demo}`
+  return `Changes saved; the event remains ${statusLabel(event.status)}.${demo}`
+}
+
 export default function OrgEventForm() {
   const { user } = useAuth()
   const orgEmail = user?.email || ''
@@ -75,13 +86,11 @@ export default function OrgEventForm() {
     setServerError('')
     setFieldErrors({})
     try {
-      if (isEdit) {
-        await updateOrgEvent(orgEmail, id, values, { submit })
-      } else {
-        await createOrgEvent(orgEmail, user?.name || '', values, { submit })
-      }
+      const saved = isEdit
+        ? await updateOrgEvent(orgEmail, id, values, { submit })
+        : await createOrgEvent(orgEmail, user?.name || '', values, { submit })
       navigate('/org/events', {
-        state: { notice: submit ? 'Event submitted for admin approval.' : 'Draft saved.' },
+        state: { notice: saveNotice(saved, submit) },
       })
     } catch (err) {
       if (err.fields) setFieldErrors(err.fields)
@@ -121,8 +130,9 @@ export default function OrgEventForm() {
   return (
     <>
       <p className="muted org-sub">
-        {isEdit ? 'Update the draft, then save or resubmit for approval.' : 'Save as a draft now, submit for admin approval when ready.'}
-        {' '}Mock only — nothing is sent to AWS.
+        {API_MODE === 'live'
+          ? `${isEdit ? 'Update' : 'Create'} a published event. Changes are saved to AWS immediately; this deployment has no approval workflow.`
+          : `${isEdit ? 'Update the draft, then save or resubmit for approval.' : 'Save as a draft now, submit for admin approval when ready.'} Demo workflow — stored in this browser only; no API, Cognito, or DynamoDB writes.`}
       </p>
       {serverError && <div className="alert alert-error" role="alert">{serverError}</div>}
       <form
@@ -130,7 +140,7 @@ export default function OrgEventForm() {
         noValidate
         onSubmit={(e) => {
           e.preventDefault()
-          handleSave(false)
+          handleSave(true)
         }}
       >
         <div className="org-form-grid">
@@ -183,18 +193,24 @@ export default function OrgEventForm() {
             <input id="org-venue" name="venue" type="text" value={values.venue} onChange={handleChange} placeholder="e.g. Seminar Hall A" required />
             {fieldErrors.venue && <span className="field-error" role="alert">{fieldErrors.venue}</span>}
           </div>
-          <div className="field">
-            <label htmlFor="org-banner">Banner image URL (optional)</label>
-            <input id="org-banner" name="bannerUrl" type="url" value={values.bannerUrl} onChange={handleChange} placeholder="https://…" />
-            {fieldErrors.bannerUrl && <span className="field-error" role="alert">{fieldErrors.bannerUrl}</span>}
-          </div>
+          {API_MODE === 'mock' && (
+            <div className="field">
+              <label htmlFor="org-banner">Banner image URL (optional)</label>
+              <input id="org-banner" name="bannerUrl" type="url" value={values.bannerUrl} onChange={handleChange} placeholder="https://…" />
+              {fieldErrors.bannerUrl && <span className="field-error" role="alert">{fieldErrors.bannerUrl}</span>}
+            </div>
+          )}
         </div>
         <div className="org-form-actions">
-          <button type="button" className="btn btn-secondary" disabled={saving !== null} onClick={() => handleSave(false)}>
-            {saving === 'draft' ? 'Saving…' : 'Save draft'}
-          </button>
+          {API_MODE === 'mock' && (
+            <button type="button" className="btn btn-secondary" disabled={saving !== null} onClick={() => handleSave(false)}>
+              {saving === 'draft' ? 'Saving…' : 'Save draft'}
+            </button>
+          )}
           <button type="submit" className="btn" disabled={saving !== null}>
-            {saving === 'submit' ? 'Submitting…' : 'Submit for approval'}
+            {API_MODE === 'live'
+              ? (saving ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save changes' : 'Create event'))
+              : (saving === 'submit' ? 'Submitting…' : 'Submit for approval')}
           </button>
           <Link className="link-more" to="/org/events">Cancel</Link>
         </div>

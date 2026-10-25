@@ -1,6 +1,6 @@
 // Handler tests. Run with `npm test` from the backend folder.
 // Uses the Node.js built-in test runner (no test framework dependency).
-const { describe, it, before, beforeEach, after } = require('node:test')
+const { describe, it, before, beforeEach, after, mock } = require('node:test')
 const assert = require('node:assert/strict')
 
 const { invoke, devHeaders, cognitoAuthorizer } = require('./helpers')
@@ -8,21 +8,37 @@ const { getStore, resetStore } = require('../functions/lib/store')
 
 const getEvents = require('../functions/getEvents')
 const createEvent = require('../functions/createEvent')
+const getOrganizationEvents = require('../functions/getOrganizationEvents')
+const updateEvent = require('../functions/updateEvent')
 const register = require('../functions/register')
 const getRegistrations = require('../functions/getRegistrations')
 
 const ADMIN = devHeaders('admin', 'admin@univent.demo', 'Demo Admin')
 const STUDENT_A = devHeaders('student', 'asha@college.edu', 'Asha Sharma')
 const STUDENT_B = devHeaders('student', 'rohan@college.edu', 'Rohan Patil')
+const ORGANIZATION_A = cognitoAuthorizer({
+  sub: 'organization-sub-a',
+  email: 'codecell@ves.ac.in',
+  name: 'CodeCell',
+  groups: ['organizations'],
+})
+const ORGANIZATION_B = cognitoAuthorizer({
+  sub: 'organization-sub-b',
+  email: 'robotics@ves.ac.in',
+  name: 'Robotics Club',
+  groups: ['organizations'],
+})
 
 const originalEnv = { ...process.env }
 
 before(() => {
   process.env.UNIVENT_DEV_AUTH = 'true'
   process.env.CORS_ORIGIN = '*'
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-25T12:00:00.000Z') })
 })
 
 after(() => {
+  mock.timers.reset()
   for (const key of ['UNIVENT_DEV_AUTH', 'CORS_ORIGIN']) {
     if (originalEnv[key] === undefined) delete process.env[key]
     else process.env[key] = originalEnv[key]
@@ -118,13 +134,32 @@ describe('POST /events', () => {
     assert.match(res.json.message, /administrator/i)
   })
 
-  it('rejects an organization account with 403 in Phase 3', async () => {
+  it('allows an organization to create an event with trusted Cognito ownership', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: devHeaders('organization', 'codecell@ves.ac.in', 'CodeCell'),
-      body: { title: 'Hack Night', date: '2026-11-02', venue: 'Seminar Hall A' },
+      authorizer: ORGANIZATION_A,
+      body: {
+        title: 'Organization Event',
+        date: '2099-11-02',
+        venue: 'Seminar Hall A',
+        ownerSub: 'attacker-sub',
+        organizer: 'Forged Organizer',
+      },
     })
 
+    assert.equal(res.statusCode, 201)
+    const stored = getStore().getEvent(res.json.eventId)
+    assert.equal(stored.ownerSub, 'organization-sub-a')
+    assert.equal(stored.organizer, 'CodeCell')
+    assert.equal(res.json.ownerSub, undefined)
+  })
+
+  it('keeps students from creating events', async () => {
+    const res = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: { title: 'Hack Night', date: '2026-11-02', venue: 'Seminar Hall A' },
+    })
     assert.equal(res.statusCode, 403)
   })
 
@@ -217,6 +252,133 @@ describe('POST /events', () => {
   })
 })
 
+describe('GET /organization/events', () => {
+  it('lists only the organization owner events and allows admin oversight', async () => {
+    const createdA = await invoke(createEvent.handler, {
+      method: 'POST',
+      authorizer: ORGANIZATION_A,
+      body: { title: 'CodeCell Event', date: '2099-11-02', venue: 'Lab 1' },
+    })
+    const createdB = await invoke(createEvent.handler, {
+      method: 'POST',
+      authorizer: ORGANIZATION_B,
+      body: { title: 'Robotics Event', date: '2099-11-03', venue: 'Lab 2' },
+    })
+
+    const orgList = await invoke(getOrganizationEvents.handler, {
+      method: 'GET',
+      authorizer: ORGANIZATION_A,
+    })
+    assert.equal(orgList.statusCode, 200)
+    assert.deepEqual(orgList.json.events.map((row) => row.eventId), [createdA.json.eventId])
+
+    const adminList = await invoke(getOrganizationEvents.handler, {
+      method: 'GET',
+      authorizer: cognitoAuthorizer({
+        sub: 'admin-sub',
+        email: 'admin@univent.demo',
+        groups: ['admins'],
+      }),
+    })
+    assert.equal(adminList.statusCode, 200)
+    assert.ok(adminList.json.events.some((row) => row.eventId === createdA.json.eventId))
+    assert.ok(adminList.json.events.some((row) => row.eventId === createdB.json.eventId))
+  })
+
+  it('rejects anonymous and student callers', async () => {
+    const anonymous = await invoke(getOrganizationEvents.handler, { method: 'GET' })
+    const student = await invoke(getOrganizationEvents.handler, {
+      method: 'GET',
+      headers: STUDENT_A,
+    })
+    assert.equal(anonymous.statusCode, 401)
+    assert.equal(student.statusCode, 403)
+  })
+})
+
+describe('PUT /events/{eventId}', () => {
+  const updatedValues = {
+    title: 'Updated Organization Event',
+    date: '2099-11-02',
+    venue: 'Updated Hall',
+    description: 'Updated description for the event.',
+    capacity: 20,
+    category: 'Technical',
+    startTime: '10:00',
+    endTime: '12:00',
+    regDeadline: '2099-11-01',
+  }
+
+  async function createOwnedEvent(authorizer = ORGANIZATION_A) {
+    return invoke(createEvent.handler, {
+      method: 'POST',
+      authorizer,
+      body: { title: 'Organization Event', date: '2099-11-02', venue: 'Hall 1' },
+    })
+  }
+
+  it('allows an organization to update its own event but ignores forged ownership', async () => {
+    const created = await createOwnedEvent()
+    const result = await invoke(updateEvent.handler, {
+      method: 'PUT',
+      path: `/events/${created.json.eventId}`,
+      pathParameters: { eventId: created.json.eventId },
+      authorizer: ORGANIZATION_A,
+      body: { ...updatedValues, ownerSub: 'organization-sub-b' },
+    })
+    assert.equal(result.statusCode, 200)
+    assert.equal(result.json.title, updatedValues.title)
+    assert.equal(getStore().getEvent(created.json.eventId).ownerSub, 'organization-sub-a')
+  })
+
+  it('denies another organization and keeps admin update access', async () => {
+    const created = await createOwnedEvent()
+    const denied = await invoke(updateEvent.handler, {
+      method: 'PUT',
+      pathParameters: { eventId: created.json.eventId },
+      authorizer: ORGANIZATION_B,
+      body: updatedValues,
+    })
+    assert.equal(denied.statusCode, 403)
+
+    const adminUpdate = await invoke(updateEvent.handler, {
+      method: 'PUT',
+      pathParameters: { eventId: created.json.eventId },
+      authorizer: cognitoAuthorizer({
+        sub: 'admin-sub',
+        email: 'admin@univent.demo',
+        groups: ['admins'],
+      }),
+      body: updatedValues,
+    })
+    assert.equal(adminUpdate.statusCode, 200)
+    assert.equal(adminUpdate.json.title, updatedValues.title)
+  })
+
+  it('rejects capacity changes below existing registrations', async () => {
+    const created = await createOwnedEvent()
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: { eventId: created.json.eventId, name: 'Asha Sharma', email: 'asha@college.edu' },
+    })
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_B,
+      body: { eventId: created.json.eventId, name: 'Rohan Patil', email: 'rohan@college.edu' },
+    })
+
+    const result = await invoke(updateEvent.handler, {
+      method: 'PUT',
+      pathParameters: { eventId: created.json.eventId },
+      authorizer: ORGANIZATION_A,
+      body: { ...updatedValues, capacity: 1 },
+    })
+    assert.equal(result.statusCode, 409)
+    assert.match(result.json.message, /capacity/i)
+  })
+})
+
 describe('POST /register', () => {
   it('rejects a signed-out caller with 401', async () => {
     const res = await invoke(register.handler, {
@@ -298,6 +460,112 @@ describe('POST /register', () => {
 
     assert.equal(res.statusCode, 404)
     assert.match(res.json.message, /event not found/i)
+  })
+
+  it('rejects a registration after the deadline with 409', async () => {
+    const created = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: ADMIN,
+      body: {
+        title: 'Expired Deadline Event',
+        date: '2099-12-31',
+        venue: 'Lab 6',
+        regDeadline: '2000-01-01',
+      },
+    })
+
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: {
+        eventId: created.json.eventId,
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+      },
+    })
+
+    assert.equal(res.statusCode, 409)
+    assert.match(res.json.message, /closed/i)
+  })
+
+  it('rejects a registration for a past event with 409', async () => {
+    const created = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: ADMIN,
+      body: {
+        title: 'Past Event',
+        date: '2000-01-01',
+        venue: 'Old Hall',
+      },
+    })
+
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: {
+        eventId: created.json.eventId,
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+      },
+    })
+
+    assert.equal(res.statusCode, 409)
+    assert.match(res.json.message, /started|ended/i)
+  })
+
+  it('rejects a registration for an event that has already started today', async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const created = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: ADMIN,
+      body: {
+        title: 'Started Today',
+        date: today,
+        venue: 'Lab 7',
+        startTime: '00:00',
+      },
+    })
+
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: {
+        eventId: created.json.eventId,
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+      },
+    })
+
+    assert.equal(res.statusCode, 409)
+    assert.match(res.json.message, /started/i)
+  })
+
+  it('accepts a registration for an event that is still open', async () => {
+    const created = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: ADMIN,
+      body: {
+        title: 'Open Future Event',
+        date: '2099-12-31',
+        venue: 'Lab 8',
+        startTime: '10:00',
+        endTime: '12:00',
+        regDeadline: '2099-12-30',
+      },
+    })
+
+    const res = await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: {
+        eventId: created.json.eventId,
+        name: 'Asha Sharma',
+        email: 'asha@college.edu',
+      },
+    })
+
+    assert.equal(res.statusCode, 201)
+    assert.equal(res.json.eventId, created.json.eventId)
   })
 
   it('rejects an email that does not match the signed-in account with 403', async () => {
@@ -409,17 +677,6 @@ describe('GET /registrations', () => {
     assert.equal(res.statusCode, 401)
   })
 
-  it('rejects an organization account with 403', async () => {
-    const res = await invoke(getRegistrations.handler, {
-      method: 'GET',
-      path: '/registrations',
-      headers: devHeaders('organization', 'codecell@ves.ac.in', 'CodeCell'),
-    })
-
-    assert.equal(res.statusCode, 403)
-    assert.match(res.json.message, /organization/i)
-  })
-
   it('returns every registration to an admin', async () => {
     await invoke(register.handler, {
       method: 'POST',
@@ -463,6 +720,47 @@ describe('GET /registrations', () => {
     assert.equal(res.statusCode, 200)
     assert.equal(res.json.registrations.length, 1)
     assert.equal(res.json.registrations[0].email, 'asha@college.edu')
+  })
+
+  it('limits organization registrations to its own events and denies another org event filter', async () => {
+    const eventA = await invoke(createEvent.handler, {
+      method: 'POST',
+      authorizer: ORGANIZATION_A,
+      body: { title: 'CodeCell Workshop', date: '2099-11-02', venue: 'Lab 1' },
+    })
+    const eventB = await invoke(createEvent.handler, {
+      method: 'POST',
+      authorizer: ORGANIZATION_B,
+      body: { title: 'Robotics Workshop', date: '2099-11-03', venue: 'Lab 2' },
+    })
+
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_A,
+      body: { eventId: eventA.json.eventId, name: 'Asha Sharma', email: 'asha@college.edu' },
+    })
+    await invoke(register.handler, {
+      method: 'POST',
+      headers: STUDENT_B,
+      body: { eventId: eventB.json.eventId, name: 'Rohan Patil', email: 'rohan@college.edu' },
+    })
+
+    const orgRows = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      authorizer: ORGANIZATION_A,
+    })
+    assert.equal(orgRows.statusCode, 200)
+    assert.equal(orgRows.json.registrations.length, 1)
+    assert.equal(orgRows.json.registrations[0].eventId, eventA.json.eventId)
+
+    const denied = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      authorizer: ORGANIZATION_A,
+      query: { eventId: eventB.json.eventId },
+    })
+    assert.equal(denied.statusCode, 403)
   })
 
   it('keeps the owner filter when a student also filters by eventId', async () => {

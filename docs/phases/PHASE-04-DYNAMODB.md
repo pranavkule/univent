@@ -3,8 +3,9 @@
 Owner: Teammate 1. Goal: design the tables and connect the Phase 3 handlers to
 DynamoDB without changing the API contract.
 
-Status: implemented and verified locally with unit tests and DynamoDB Local.
-No AWS deployment has been performed; deployment is Phase 7.
+The original DynamoDB implementation was verified locally. The project owner
+reports a deployed backend in `us-east-1`; the organization ownership changes
+in the current template have not been deployed or live-tested.
 
 ## Configuration
 | Variable | Purpose |
@@ -13,6 +14,7 @@ No AWS deployment has been performed; deployment is Phase 7.
 | `EVENTS_TABLE` | Events table name |
 | `REGISTRATIONS_TABLE` | Registrations table name |
 | `REGISTRATIONS_OWNER_INDEX` | GSI name, default `OwnerEmailIndex` |
+| `EVENTS_OWNER_INDEX` | Organization event GSI, default `OrganizationOwnerIndex` |
 | `DYNAMODB_ENDPOINT` | Optional local endpoint, e.g. `http://127.0.0.1:8000` |
 
 `backend/functions/lib/store.js` lazily loads the selected implementation.
@@ -25,6 +27,9 @@ with the same `await` expressions.
 - Partition key: `eventId` (string).
 - Public fields: title, date, venue, description, capacity, category,
   organizer, startTime, endTime, regDeadline, createdAt.
+- Organization-created items additionally store the internal Cognito `ownerSub`
+  claim. The `OrganizationOwnerIndex` GSI uses `ownerSub` as partition key and
+  `eventId` as sort key; ownerless existing items are not rewritten or indexed.
 - Internal fields: `registeredCount` (number), `registrationCounterReady`
   (boolean).
 - Created events start with `registeredCount = 0` and readiness `true`.
@@ -41,11 +46,14 @@ with the same `await` expressions.
 | Need | Access |
 | ---- | ------ |
 | List events | Scan Events (then sort by date, eventId in the store) |
+| List organization events | Query `OrganizationOwnerIndex` by trusted Cognito `sub` |
 | Get event | GetItem Events by `eventId` |
-| Create event | PutItem Events with counter fields |
+| Create event | PutItem Events with counter fields and optional trusted `ownerSub` |
+| Update event | Conditional UpdateItem; organization updates require matching `ownerSub` |
 | Register | TransactWriteItems: conditional UpdateItem Events + conditional PutItem Registrations |
 | Admin registrations | Scan Registrations, or Query by `eventId` when filtered |
 | Student registrations | Query GSI `OwnerEmailIndex` by `ownerEmail` |
+| Organization registrations | Query registrations by each event ID returned from `OrganizationOwnerIndex` |
 
 Category/date filtering is still client-side; Phase 4 does not add filters to
 `GET /events`.
@@ -79,6 +87,10 @@ retried a bounded number of times with exponential backoff.
 ## Identity and ownership
 - `email` and `ownerEmail` are normalized from the authenticated principal.
 - `userId` is the principal `sub`.
+- New organization events store their `ownerSub` from the authenticated
+  Cognito `sub`; client-supplied ownership fields are ignored.
+- Organization update and registration-list checks are enforced by handlers
+  and a conditional DynamoDB update, not React route guards.
 - Body ownership fields are ignored. The body email must match the principal.
 - A principal without an email is rejected with `403`.
 - Students query their own registrations through the GSI; admins may scan all
@@ -90,14 +102,14 @@ Each function gets its own least-privilege role when
 
 | Function | Permissions |
 | -------- | ----------- |
-| GetEvents | `dynamodb:Scan` on Events |
-| CreateEvent | `dynamodb:PutItem` on Events |
-| Register | `dynamodb:GetItem`, `dynamodb:UpdateItem` on Events; `dynamodb:PutItem` on Registrations |
-| GetRegistrations | `dynamodb:GetItem` on Events; `dynamodb:Query` on Registrations and the GSI; `dynamodb:Scan` on Registrations |
+| GetEvents / organization event list | `dynamodb:Scan` on Events; `dynamodb:Query` on `OrganizationOwnerIndex` |
+| Create/list/update events | `dynamodb:PutItem`, `GetItem`, `UpdateItem` on Events; `Query` on `OrganizationOwnerIndex` |
+| Register | `dynamodb:GetItem`, `UpdateItem`, and `TransactWriteItems` on Events; `dynamodb:PutItem` and `TransactWriteItems` on Registrations |
+| GetRegistrations | `dynamodb:GetItem` on Events; `dynamodb:Query` on `OrganizationOwnerIndex`, Registrations and `OwnerEmailIndex`; `dynamodb:Scan` on Registrations |
 
-All four roles attach `AWSLambdaBasicExecutionRole` for CloudWatch Logs.
-`TransactWriteItems` does not need its own IAM action; the item-level
-`UpdateItem` and `PutItem` permissions authorize the transaction.
+The roles attach `AWSLambdaBasicExecutionRole` for CloudWatch Logs.
+`TransactWriteItems` must be allowed on both tables participating in the
+transaction in addition to the regular item-level actions.
 
 To use an existing role (for example AWS Academy `LabRole`), pass its ARN as
 `LambdaExecutionRoleArn`. That role must already allow the required DynamoDB
@@ -186,6 +198,13 @@ sam build --template-file infrastructure/template.yaml --build-dir C:\Users\<you
   mini-project scale. Revisit with projections or a different key design if the
   dataset grows.
 - The owner GSI is eventually consistent.
+- Organization registration listing performs one registrations query per
+  owned event because registrations have no event-owner GSI. This is adequate
+  at mini-project scale but may need a denormalized index for organizations
+  with many events.
+- Existing seeded/admin events have no trusted `ownerSub`; do not assign them
+  automatically by matching the `organizer` display field. They remain
+  Admin-managed unless an explicit reviewed ownership migration is designed.
 - Reconcile/seed scripts require table names or environment variables.
 - The supplied-role path cannot enforce least privilege; it depends on the
   permissions of the provided role.

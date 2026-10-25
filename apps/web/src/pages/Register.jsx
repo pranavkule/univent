@@ -102,7 +102,7 @@ export default function Register() {
       )}
       {!existing && seatsLeft !== null && seatsLeft > 0 && !closed && (
         <>
-          <p className="muted">Registering as {user?.name} ({user?.email}). Details are pre-filled but editable.</p>
+          <p className="muted">Registering as {user?.name} ({user?.email}). Your name is editable; the email is tied to your signed-in account.</p>
           <RegistrationForm
             eventId={event.eventId}
             onSubmit={handleSubmit}

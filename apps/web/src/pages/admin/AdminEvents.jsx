@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
 import { listPlatformEvents } from '../../services/admin.js'
+import { API_MODE } from '../../services/api.js'
 import { eventCategories as mockCategories } from '../../services/eventCategories.js'
 import { ORG_STATUSES, moderateOrgEvent } from '../../services/orgEvents.js'
 
@@ -70,7 +71,7 @@ export default function AdminEvents() {
     try {
       await moderateOrgEvent(e.eventId, 'approve')
       await refresh()
-      setNotice(`"${e.title}" is now published.`)
+      setNotice(`Demo approval recorded: "${e.title}" is now published in this browser. No AWS data changed.`)
     } catch (err) {
       setError(err.message || 'Approval failed.')
     } finally {
@@ -103,7 +104,7 @@ export default function AdminEvents() {
     moderateOrgEvent(target.eventId, action, reason.trim())
       .then(() => refresh())
       .then(() => {
-        setNotice(`"${target.title}" ${action === 'reject' ? 'rejected' : 'cancelled'}.`)
+        setNotice(`Demo ${action === 'reject' ? 'rejection' : 'cancellation'} recorded for "${target.title}" in this browser. No AWS data changed.`)
         setModerateTarget(null)
         setReason('')
       })
@@ -116,7 +117,8 @@ export default function AdminEvents() {
   return (
     <>
       <p className="muted org-sub">
-        {events.length} events across the platform.
+        {events.length} events across the platform. Organization event approvals are a demo workflow — decisions stay in this browser and are not written to DynamoDB.
+        {' '}{API_MODE === 'live' ? 'System events come from the live API.' : 'System events come from mock data.'}
         {' '}<Link className="link-more" to="/admin/events/new">Create event</Link>
       </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}

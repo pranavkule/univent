@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { getEvent, getRegistration } from '../services/api.js'
+import { API_MODE, getEvent, getRegistration } from '../services/api.js'
 
 export default function Confirmation() {
   const { id } = useParams()
@@ -55,7 +55,10 @@ export default function Confirmation() {
 
   return (
     <div className="container">
-      <div className="alert alert-ok">Registration successful!</div>
+      <div className="alert alert-ok" role="status">
+        Registration successful!
+        {API_MODE === 'mock' && ' Demo only — this confirmation is stored in this browser, not in AWS.'}
+      </div>
       <div className="detail">
         <h2>Confirmation</h2>
         <p>Your registration ID (show it at the venue):</p>

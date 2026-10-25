@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { createEvent } from '../../services/api.js'
+import { API_MODE, createEvent } from '../../services/api.js'
 import { cleanEventInput, validateEventInput } from '../../services/eventValidation.js'
 import { eventCategories as mockCategories } from '../../services/eventCategories.js'
 
@@ -40,7 +40,10 @@ export default function AdminEventForm() {
     setSubmitting(true)
     try {
       const created = await createEvent(cleaned)
-      navigate('/admin/events', { state: { notice: `"${created.title}" was created.` } })
+      const persistence = API_MODE === 'mock'
+        ? 'created in this browser (demo — not saved to AWS)'
+        : 'saved to the backend API'
+      navigate('/admin/events', { state: { notice: `"${created.title}" was ${persistence}.` } })
     } catch (err) {
       if (err.fields) setFieldErrors(err.fields)
       setServerError(err.message || 'Could not create the event.')
@@ -51,7 +54,12 @@ export default function AdminEventForm() {
 
   return (
     <>
-      <p className="muted org-sub">Create a published event directly on the platform.</p>
+      <p className="muted org-sub">
+        Create a published event directly on the platform.{' '}
+        {API_MODE === 'mock'
+          ? 'Mock mode — the event is stored in this browser, not in AWS.'
+          : 'Live mode — the event is written through the backend API.'}
+      </p>
       {serverError && <div className="alert alert-error" role="alert">{serverError}</div>}
       <form className="form org-form" noValidate onSubmit={handleSubmit}>
         <div className="org-form-grid">
