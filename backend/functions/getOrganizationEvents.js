@@ -3,6 +3,7 @@ const { json, error, requestMethod } = require('./lib/http')
 const { resolvePrincipal, isAdmin, isOrganization } = require('./lib/principal')
 const { getStore } = require('./lib/store')
 const { publicEvent } = require('./lib/serializers')
+const { isApprovedOrganization } = require('./lib/organizationAccess')
 
 exports.handler = async (event) => {
   const method = requestMethod(event)
@@ -15,12 +16,14 @@ exports.handler = async (event) => {
   if (!isAdmin(principal) && !isOrganization(principal)) {
     return error(403, 'Only administrators and organization accounts can view organization events.')
   }
-  if (isOrganization(principal) && !principal.sub) {
-    return error(403, 'The organization account has no trusted user identifier.')
-  }
-
   try {
     const store = getStore()
+    if (
+      isOrganization(principal) &&
+      !(await isApprovedOrganization(principal, store))
+    ) {
+      return error(403, 'An approved organization application is required to view organization events.')
+    }
     const events = isAdmin(principal)
       ? await store.listEvents()
       : await store.listEventsByOwner(principal.sub)

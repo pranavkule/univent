@@ -17,17 +17,18 @@ How we verify UniVent. Manual first, in this order.
   `UNIVENT_DEV_AUTH=true node scripts/dev-api.js`.
 
 ## 3. Backend storage, auth, and integration (Phases 4–6)
-Verified locally on 2026-10-24 after Phase 6:
+Local verification for the organization application workflow:
 
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Install backend dependencies | `npm --prefix backend/functions install` | once per clone |
-| Handler + DynamoDB store + auth unit tests | `npm --prefix backend test` | 69/69 pass |
-| DynamoDB Local integration | `npm --prefix backend run test:integration` | 9/9 pass, 0 skipped |
+| Handler + DynamoDB store + auth unit tests | `npm --prefix backend test` | 105/105 pass |
+| DynamoDB Local integration | `npm --prefix backend run test:integration` | Not run for this change; requires an explicitly started local DynamoDB instance |
 | SAM template lint | `sam validate --lint --template-file infrastructure/template.yaml` | valid |
-| SAM build | `sam build --template-file infrastructure/template.yaml --build-dir <short path>` | succeeds |
-| Frontend auth + live API tests | `npm --prefix apps/web test` | 26/26 pass |
-| Frontend build | `npm --prefix apps/web run build` | passes (161 modules) |
+| SAM build | `sam build --template-file infrastructure/template.yaml` | succeeds |
+| Frontend auth + live API tests | `npm --prefix apps/web test` | 34/34 pass |
+| Frontend mock browser E2E | `npm --prefix apps/web run test:e2e` | 2/2 pass; exercises the local mock event-approval workflow, not AWS application approval |
+| Frontend build | `npm --prefix apps/web run build` | passes (163 modules) |
 
 The integration suite starts from Docker:
 
@@ -41,6 +42,15 @@ The suite fails on setup errors and only skips when the local endpoint is
 unreachable. A passing run must report `0 skipped`.
 
 Covered cases:
+- organization application is tied to a verified Cognito `sub`;
+- duplicate submissions and conflicting decisions return `409`;
+- only Admins can list/decide applications; Cognito group grant/removal failures
+  are handled fail-closed;
+- pending/rejected/suspended accounts with stale organization group claims
+  cannot access organization APIs;
+- cross-organization event and registration access is denied;
+- student event registration, duplicate protection, and capacity checks remain
+  covered by regressions;
 - concurrent registrations never exceed capacity;
 - concurrent duplicate registrations create exactly one row;
 - missing/false counter readiness fails closed with `409`;
@@ -69,9 +79,11 @@ Automated locally:
 - Frontend validation rejects non-college emails and weak passwords; mock
   student sign-up/sign-in still works.
 
-Deployment-dependent (Phase 7):
+Deployment-dependent (Phase 7; not verified by the local tests above):
 - Cognito email-code delivery, confirmation, and resend.
-- Real ID token claims and group membership from provisioning.
+- Real ID token claims, application submission, Admin approval, and Cognito
+  `AdminAddUserToGroup` / `AdminRemoveUserFromGroup` permissions in AWS
+  Academy.
 - API Gateway `401` for missing/invalid/expired tokens.
 - CORS headers on `401`/`403`, and token refresh after 60 minutes.
 
@@ -87,16 +99,20 @@ the Cognito authorizer.
   expired local sessions.
 - Event availability uses the public `registeredCount`; the live API has no
   cancel route, so cancellation is hidden outside mock mode.
-- Admin event creation calls admin-only `POST /events`.
-- Org workspace records remain browser-local mock data; live registration
-  history is student/admin only.
+- Admin event creation calls admin-authorized `POST /events`.
+- Organization application submission and Admin decisions use live APIs when
+  `VITE_API_MODE=live`; mock mode remains browser-local and is not production
+  authorization or persistence.
+- Approved organization event/registration APIs use the authenticated
+  Cognito-sub owner scope; application status is checked by the backend.
 - A live transport smoke against `scripts/dev-api.js` passed: public list,
   admin event creation, student registration/history, count update, duplicate
   `409`, and non-admin create `403`.
 
 ## 6. End-to-end (Phase 7–8)
-- List → details → login → register → confirmation → admin registrations,
-  first locally then against the deployed URLs from an incognito window.
+- Existing browser E2E tests cover local mock event approval/rejection.
+- The persisted organization application/approval workflow still needs a
+  deployed Cognito/API acceptance test before it can be claimed as live.
 
 ## 7. Evidence
 - Results recorded here (pass/fail per case).

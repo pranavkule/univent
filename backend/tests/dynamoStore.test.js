@@ -32,6 +32,7 @@ function makeStore(fake, options = {}) {
     client: fake,
     eventsTable: 'Events',
     registrationsTable: 'Registrations',
+    organizationApplicationsTable: 'OrganizationApplications',
     retryBaseDelayMs: 0,
     ...options,
   })
@@ -345,6 +346,78 @@ describe('DynamoDB store', () => {
 
     assert.equal(result, false)
     assert.equal(fake.calls.length, 1)
+  })
+
+  it('creates organization applications with a conditional trusted-sub key', async () => {
+    const fake = new FakeClient(() => ({}))
+    const store = makeStore(fake)
+    const application = await store.createOrganizationApplication({
+      userSub: 'cognito-sub',
+      organizationName: 'Robotics Club',
+      officialEmail: 'robotics@ves.ac.in',
+      representativeName: 'Aarav Mehta',
+      representativeTitle: 'Secretary',
+      representativePhone: '+1 555 010 1234',
+    })
+
+    assert.equal(application.status, 'PENDING')
+    assert.equal(fake.calls[0].input.TableName, 'OrganizationApplications')
+    assert.equal(fake.calls[0].input.Item.userSub, 'cognito-sub')
+    assert.equal(fake.calls[0].input.Item.status, 'PENDING')
+    assert.match(fake.calls[0].input.ConditionExpression, /attribute_not_exists/)
+  })
+
+  it('maps a duplicate organization application key to a conflict error', async () => {
+    const fake = new FakeClient(() => {
+      const err = new Error('conditional check failed')
+      err.name = 'ConditionalCheckFailedException'
+      throw err
+    })
+    const store = makeStore(fake)
+
+    await expectCode(
+      store.createOrganizationApplication({ userSub: 'existing-sub' }),
+      CODES.ORGANIZATION_APPLICATION_EXISTS,
+    )
+  })
+
+  it('reads organization applications consistently and conditionally updates status', async () => {
+    const fake = new FakeClient((command) => {
+      if (command.constructor.name === 'GetCommand') {
+        return { Item: { userSub: 'cognito-sub', status: 'PENDING' } }
+      }
+      if (command.constructor.name === 'UpdateCommand') {
+        return { Attributes: { userSub: 'cognito-sub', status: 'APPROVED' } }
+      }
+      throw new Error(`Unexpected command: ${command.constructor.name}`)
+    })
+    const store = makeStore(fake)
+    const application = await store.getOrganizationApplication('cognito-sub')
+    const updated = await store.updateOrganizationApplicationStatus(
+      'cognito-sub',
+      { status: 'APPROVED', decidedBy: 'admin-sub' },
+      ['PENDING'],
+    )
+
+    assert.equal(application.status, 'PENDING')
+    assert.equal(fake.calls[0].input.ConsistentRead, true)
+    assert.equal(fake.calls[0].input.TableName, 'OrganizationApplications')
+    assert.equal(updated.status, 'APPROVED')
+    assert.match(fake.calls[1].input.ConditionExpression, /#status IN/)
+    assert.equal(fake.calls[1].input.ExpressionAttributeValues[':expected0'], 'PENDING')
+  })
+
+  it('lists organization applications from the application table', async () => {
+    const fake = new FakeClient(() => ({
+      Items: [{ userSub: 'applicant', appliedAt: '2026-10-01' }],
+    }))
+    const store = makeStore(fake)
+
+    const applications = await store.listOrganizationApplications()
+
+    assert.equal(applications[0].userSub, 'applicant')
+    assert.equal(fake.calls[0].input.TableName, 'OrganizationApplications')
+    assert.equal(fake.calls[0].input.ConsistentRead, true)
   })
 
   it('refuses to lower capacity below the current counter', async () => {

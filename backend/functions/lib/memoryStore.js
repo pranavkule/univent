@@ -10,6 +10,7 @@ const { CODES, StoreError } = require('./storeError')
 
 const events = new Map()
 const registrations = new Map()
+const organizationApplications = new Map()
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase()
@@ -18,6 +19,7 @@ function normalizeEmail(email) {
 function seed() {
   events.clear()
   registrations.clear()
+  organizationApplications.clear()
   for (const event of seedEvents) {
     events.set(event.eventId, {
       ...event,
@@ -135,6 +137,51 @@ function createRegistration({ eventId, name, email, userId = null }) {
   return { ...registration }
 }
 
+function getOrganizationApplication(userSub) {
+  const application = organizationApplications.get(userSub)
+  return application ? { ...application } : null
+}
+
+function listOrganizationApplications() {
+  return Array.from(organizationApplications.values())
+    .sort((left, right) => String(left.appliedAt).localeCompare(String(right.appliedAt)))
+    .map((application) => ({ ...application }))
+}
+
+function createOrganizationApplication(values) {
+  if (organizationApplications.has(values.userSub)) {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_EXISTS)
+  }
+  const application = {
+    ...values,
+    status: 'PENDING',
+    appliedAt: new Date().toISOString(),
+  }
+  organizationApplications.set(application.userSub, application)
+  return { ...application }
+}
+
+function updateOrganizationApplicationStatus(
+  userSub,
+  { status, decisionReason = '', decidedBy = '' },
+  expectedStatuses,
+) {
+  const application = organizationApplications.get(userSub)
+  if (!application) return null
+  if (!expectedStatuses.includes(application.status)) {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+  }
+  const updated = {
+    ...application,
+    status,
+    decisionReason: status === 'REJECTED' ? decisionReason : '',
+    decidedAt: new Date().toISOString(),
+    decidedBy,
+  }
+  organizationApplications.set(userSub, updated)
+  return { ...updated }
+}
+
 function createMemoryStore() {
   seed()
   return {
@@ -147,6 +194,10 @@ function createMemoryStore() {
     countRegistrations,
     findRegistration,
     createRegistration,
+    getOrganizationApplication,
+    listOrganizationApplications,
+    createOrganizationApplication,
+    updateOrganizationApplicationStatus,
     reset: seed,
   }
 }

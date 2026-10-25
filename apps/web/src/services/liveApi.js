@@ -94,6 +94,49 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     })
   }
 
+  async function getOrganizationApplication() {
+    const payload = await request('/organization-applications', { auth: true })
+    if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'application')) {
+      throw new ApiError('The server returned an invalid organization application response.', 502)
+    }
+    return payload.application
+  }
+
+  async function submitOrganizationApplication(input) {
+    const payload = await request('/organization-applications', {
+      method: 'POST',
+      body: input,
+      auth: true,
+    })
+    if (!payload?.application) {
+      throw new ApiError('The server returned an invalid organization application response.', 502)
+    }
+    return payload.application
+  }
+
+  async function listOrganizationApplications() {
+    const payload = await request('/organization-applications', { auth: true })
+    if (!Array.isArray(payload?.applications)) {
+      throw new ApiError('The server returned an invalid organization applications response.', 502)
+    }
+    return payload.applications
+  }
+
+  async function decideOrganizationApplication(userSub, status, decisionReason = '') {
+    const payload = await request(
+      `/admin/organization-applications/${encodeURIComponent(userSub)}`,
+      {
+        method: 'PATCH',
+        body: { status, decisionReason },
+        auth: true,
+      },
+    )
+    if (!payload?.application) {
+      throw new ApiError('The server returned an invalid organization application response.', 502)
+    }
+    return payload.application
+  }
+
   async function createRegistration({ eventId, name, email }) {
     return request('/register', {
       method: 'POST',
@@ -132,6 +175,10 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     createEvent,
     listOrganizationEvents,
     updateEvent,
+    getOrganizationApplication,
+    submitOrganizationApplication,
+    listOrganizationApplications,
+    decideOrganizationApplication,
     createRegistration,
     listRegistrations,
     getRegistration,

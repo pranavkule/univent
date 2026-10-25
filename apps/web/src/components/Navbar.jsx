@@ -100,6 +100,16 @@ export default function Navbar() {
               Sign up
             </NavLink>
           )}
+          {!user && (
+            <NavLink to="/org/signup" className={linkClass} onClick={close}>
+              Organization signup
+            </NavLink>
+          )}
+          {user?.role === 'student' && (
+            <NavLink to="/org/apply" className={linkClass} onClick={close}>
+              Apply as Organization
+            </NavLink>
+          )}
           {user && (
             <div className="account-menu" ref={accountRef}>
               <button

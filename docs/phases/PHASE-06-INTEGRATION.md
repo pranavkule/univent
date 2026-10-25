@@ -13,9 +13,12 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
    - Merge `getAuthHeaders()` from `services/auth.js` into protected requests so the Cognito ID token is sent as `Authorization: Bearer <idToken>`.
    - Remove `mockEvents.js` usage from pages (keep the file for reference/tests).
 2. Permissions:
-   - `GET /events` public; `POST /events` admin-only; `POST /register` student-only;
-     `GET /registrations` admin-all / student-own; organization gets `403` on the
-     current backend routes.
+   - `GET /events` public; students register for events; admins manage all
+     events and registrations; approved organizations manage only events
+     owned by their Cognito `sub`.
+   - Organization endpoints require both the `organizations` group and a
+     persisted `APPROVED` application. The Lambda checks this on every request;
+     React route guards are UX only.
    - Verify IAM roles in `template.yaml` grant each Lambda only what it needs (DynamoDB + CloudWatch Logs).
    - Keep frontend role guards as UX only; the API Gateway authorizer and Lambda
      role checks must remain the authority.
@@ -45,8 +48,16 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
   signed-in student's history.
 - Cancellation is mock-only until a backend route exists; the live UI hides it.
 - Admin event creation uses admin-only `POST /events`.
-- Organization workspace events and registrations remain explicitly
-  browser-local mock data.
+- Organization applications, Admin review decisions, event creation/editing,
+  and registration viewing use the live APIs in live mode. Mock mode retains
+  browser-local demo behavior and is not production authorization or
+  persistence.
+- Organization application data is stored in `OrganizationApplicationsTable`;
+  Admin approval/rejection/suspension updates the state and synchronizes
+  Cognito group membership. Rejected/suspended records block organization API
+  access even when a token has a stale group claim.
 - Frontend tests use mocked HTTP for Cognito and local dev headers.
-- Remaining Phase 7 checks: deployed API URL/CORS, Cognito authorizer
-  `401/403`, token refresh, and live end-to-end verification.
+- Remaining Phase 7 checks: deploy the application table and routes, verify
+  AWS Academy IAM permission for Cognito group add/remove, deployed API
+  URL/CORS, Cognito authorizer `401/403`, token refresh, and live end-to-end
+  application/approval verification.

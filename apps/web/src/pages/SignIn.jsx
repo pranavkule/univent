@@ -37,6 +37,10 @@ export default function SignIn() {
     try {
       const session = await signIn(values)
       const role = (session?.role || '').toLowerCase()
+      if (explicitFrom === '/org/apply') {
+        navigate('/org/apply', { replace: true })
+        return
+      }
       if (role === 'organization') {
         // Organization accounts open their workspace directly. Only a deep
         // link into the workspace itself is honored instead.

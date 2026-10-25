@@ -2,30 +2,35 @@
 
 The project owner reports an existing deployment in `us-east-1` and successful
 live student login/registration. This guide does not independently verify AWS.
-The organization-event changes in the current template have not been deployed;
-check AWS Academy permissions and review the change set before updating the
-existing stack.
+The organization application and approval changes in the current template
+have not been deployed; check AWS Academy permissions and review the change
+set before updating the existing stack.
 
 ## What the repository currently defines
 
 - `infrastructure/template.yaml` creates a regional API Gateway **REST API**
   (`AWS::Serverless::Api`, stage `Prod`), Node.js 22 Lambda functions,
-  two on-demand DynamoDB tables, the `OwnerEmailIndex` and
+  three on-demand DynamoDB tables, the `OwnerEmailIndex` and
   `OrganizationOwnerIndex` GSIs, a Cognito user pool,
   a public app client, two groups, and the PreSignUp trigger.
-- The API paths are `GET /events` (public), `POST /events`,
-  `GET /organization/events`, `PUT /events/{eventId}`, `POST /register`, and
-  `GET /registrations` (Cognito-protected except public `GET /events`). The API
-  output includes `/Prod`.
+- The API paths include public `GET /events` and Cognito-protected event,
+  registration, and organization application routes:
+  `POST /events`, `GET /organization/events`, `PUT /events/{eventId}`,
+  `POST /register`, `GET /registrations`, `GET/POST /organization-applications`,
+  and `PATCH /admin/organization-applications/{userSub}`. The API output
+  includes `/Prod`.
 - Lambda table names and `UNIVENT_STORE=dynamodb` are wired from CloudFormation
   references. Outputs provide the API URL, Cognito IDs/region, and table/index
-  names.
-- The functions package the AWS SDK v3 DynamoDB dependencies from
+  names, including `OrganizationApplicationsTableName`.
+- The functions package AWS SDK v3 DynamoDB and Cognito identity-provider
+  dependencies from
   `backend/functions/package-lock.json`. The runtime is `nodejs22.x`.
 - DynamoDB uses on-demand billing and server-side encryption. The registration
   table has `eventId`/`email` keys and the `ownerEmail`/`eventId` GSI. The
   Events table has an `ownerSub`/`eventId` GSI; it is sparse, so existing
-  ownerless seeded events remain intact and Admin-managed.
+  ownerless seeded events remain intact and Admin-managed. The new
+  `OrganizationApplications` table is keyed by `userSub`; the Admin list scans
+  it and should be paginated/indexed if its volume grows.
 - Cognito self-sign-up checks the exact `ves.ac.in` domain and requires email
   verification. The browser uses the Cognito SDK directly; it does not use a
   Hosted UI, so callback/logout URLs are not currently part of this flow.
@@ -51,7 +56,12 @@ existing stack.
    relationship, DynamoDB table/index access, CloudWatch Logs permissions, and
    that the caller can pass it. It must allow the new owner-index queries and
    event updates, plus `dynamodb:TransactWriteItems` on both Events and
-   Registrations for student registration. Supplying it uses the same role for all
+   Registrations for student registration. The application Lambda also needs
+   `dynamodb:GetItem`, `PutItem`, `Scan`, and `UpdateItem` on the application
+   table and `cognito-idp:AdminAddUserToGroup` /
+   `cognito-idp:AdminRemoveUserFromGroup` on the configured User Pool. Verify
+   the Learner Lab permits both Cognito actions; local SAM/tests do not prove
+   account permissions. Supplying this role uses the same role for all
    functions and gives up the template's per-function least privilege.
 3. **Hosting choice and URL:** The repository has no S3/CloudFront resources.
    Choose a bucket/hosting method and configure SPA fallback for React
@@ -63,11 +73,14 @@ existing stack.
    restricted classroom demo. To pin CORS to S3/CloudFront, the SAM template
    must first expose and use a configurable allowed origin; the current
    template cannot do this through a parameter.
-5. **Organization account:** An Admin must verify and provision an
-   organization representative into the Cognito `organizations` group using
-   the procedure in `docs/aws-setup.md`. There is no in-app approval portal.
-   New events publish immediately; moderation and cancellation are not
-   available.
+5. **Organization approval:** Organization representatives self-register
+   using `/org/signup`, confirm their college email, sign in, and apply at
+   `/org/apply`. Admins review requests in Admin > Organizations; the backend
+   grants/removes Cognito group membership as decisions are saved. Do not
+   manually grant the organization group as a substitute for approval.
+   Existing group-only accounts must submit an application and be approved
+   before organization APIs work. New events publish immediately; event
+   moderation and cancellation are not available.
 6. **Monitoring:** Lambda logs can be emitted through the basic execution
    policy, but API Gateway access logs, retention, and alarms are not
    configured. Confirm Academy permissions and decide whether to add these
@@ -176,9 +189,9 @@ hosting choices are settled.
    to the chosen hosting design; never upload `.env*`, credentials, or
    `.aws-sam`.
 
-6. **Provision privileged accounts.** Public self-sign-up is student-oriented;
-   only assign `admins`/`organizations` to approved accounts. The operator
-   script requires Cognito administrative permissions, which may be blocked in
+6. **Provision Admin accounts.** Public self-sign-up never grants privileged
+   groups. Create Admin accounts privately through the operator script. It
+   requires Cognito administrative permissions, which may be blocked in
    Academy. If approved, install its dependency and provide the initial
    password through a temporary environment variable, not a command argument:
 
@@ -192,8 +205,10 @@ hosting choices are settled.
    Remove-Item Env:UNIVENT_PROVISION_PASSWORD
    ```
 
-   Repeat for an approved organization with `--role organization`. Clear the
-   temporary variable even if provisioning fails.
+   Do not use the script to provision organization group membership. The
+   organization applies through the frontend; the decision API synchronizes
+   the group only after the Admin approves. Clear the temporary variable even
+   if provisioning fails.
 
 ## Deployed acceptance checks
 
@@ -207,6 +222,11 @@ matching Cognito outputs:
   frontend origin (CORS).
 - Protected `GET /organization/events` and `PUT /events/{eventId}` also reject
   missing/invalid tokens with `401`.
+- Submit an organization application. Before approval, verify it is `PENDING`
+  and organization event/registration routes return `403`. As Admin, verify
+  the application list, reject with a reason, and verify stale organization
+  group claims still receive `403`. Approve it and verify the group and
+  persisted state allow organization features.
 - Sign up a student at the allowed domain, receive/enter the email code, sign
   in, and confirm the app sends the ID token. Check student registration
   history is limited to that student.
@@ -215,13 +235,11 @@ matching Cognito outputs:
   duplicate registration returns `409`, and a second student gets `409` when
   the event is full. Verify an admin can list all registrations and a student
   cannot create events.
-- Provision an organization account through the Admin-controlled process in
-  `docs/aws-setup.md`. Verify it can create and list its own events, update
-  one of them, and view registrations for those events. A second organization
-  must receive `403` when updating the first organization's event or filtering
-  registrations by that event. Verify a student receives `403` on
-  organization-only routes and an Admin can list/edit events and view all
-  registrations.
+- Verify an approved organization can create/list/edit only its own events
+  and view only their registrations. A second organization must receive `403`
+  when editing the first organization's event or filtering registrations by
+  that event. Verify a student receives `403` on organization-only routes and
+  an Admin can list/edit events and view all registrations.
 - Verify events created before the ownership GSI have not been rewritten and
   are not included in organization lists; public browsing and student
   registration/capacity/duplicate checks still work.

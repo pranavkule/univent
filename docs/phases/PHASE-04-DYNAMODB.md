@@ -13,6 +13,7 @@ in the current template have not been deployed or live-tested.
 | `UNIVENT_STORE` | `memory` (default) or `dynamodb` |
 | `EVENTS_TABLE` | Events table name |
 | `REGISTRATIONS_TABLE` | Registrations table name |
+| `ORGANIZATION_APPLICATIONS_TABLE` | Organization applications and approval-state table |
 | `REGISTRATIONS_OWNER_INDEX` | GSI name, default `OwnerEmailIndex` |
 | `EVENTS_OWNER_INDEX` | Organization event GSI, default `OrganizationOwnerIndex` |
 | `DYNAMODB_ENDPOINT` | Optional local endpoint, e.g. `http://127.0.0.1:8000` |
@@ -42,6 +43,19 @@ with the same `await` expressions.
   projection ALL.
 - The composite key enforces one registration per account per event.
 
+### OrganizationApplications
+- Partition key: `userSub` (string), sourced from the authenticated Cognito
+  claim; the browser cannot choose it.
+- Attributes include organization and representative details, verified
+  official email, status (`PENDING`, `APPROVED`, `REJECTED`, or `SUSPENDED`),
+  application/decision timestamps, Admin `decidedBy`, and an optional
+  rejection reason.
+- A conditional `PutItem` prevents multiple applications for one Cognito
+  account. Status updates use conditional writes to prevent conflicting
+  concurrent decisions.
+- No GSI is defined. The Admin list endpoint scans this table; add pagination
+  or an index before the application volume makes scans unsuitable.
+
 ### Access patterns
 | Need | Access |
 | ---- | ------ |
@@ -54,6 +68,9 @@ with the same `await` expressions.
 | Admin registrations | Scan Registrations, or Query by `eventId` when filtered |
 | Student registrations | Query GSI `OwnerEmailIndex` by `ownerEmail` |
 | Organization registrations | Query registrations by each event ID returned from `OrganizationOwnerIndex` |
+| Read/submit organization application | GetItem or conditional PutItem by `userSub` |
+| Admin application list | Scan OrganizationApplications |
+| Admin application decision | Conditional UpdateItem by `userSub` |
 
 Category/date filtering is still client-side; Phase 4 does not add filters to
 `GET /events`.
@@ -106,6 +123,8 @@ Each function gets its own least-privilege role when
 | Create/list/update events | `dynamodb:PutItem`, `GetItem`, `UpdateItem` on Events; `Query` on `OrganizationOwnerIndex` |
 | Register | `dynamodb:GetItem`, `UpdateItem`, and `TransactWriteItems` on Events; `dynamodb:PutItem` and `TransactWriteItems` on Registrations |
 | GetRegistrations | `dynamodb:GetItem` on Events; `dynamodb:Query` on `OrganizationOwnerIndex`, Registrations and `OwnerEmailIndex`; `dynamodb:Scan` on Registrations |
+| CreateEvent / UpdateEvent / Register / GetRegistrations / OrganizationEvents | `dynamodb:GetItem` on OrganizationApplications for the per-request approved-status check |
+| OrganizationApplications | `dynamodb:GetItem`, `PutItem`, `Scan`, and `UpdateItem` on OrganizationApplications; `cognito-idp:AdminAddUserToGroup` and `AdminRemoveUserFromGroup` on the configured User Pool |
 
 The roles attach `AWSLambdaBasicExecutionRole` for CloudWatch Logs.
 `TransactWriteItems` must be allowed on both tables participating in the

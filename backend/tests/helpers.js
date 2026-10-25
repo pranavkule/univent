@@ -36,8 +36,22 @@ function devHeaders(role, email, name = 'Test User') {
 }
 
 // Cognito user pool authorizer claims (REST API shape).
-function cognitoAuthorizer({ sub = 'test-sub', email = '', name = 'Test User', groups = [] } = {}) {
-  return { claims: { sub, email, name, 'cognito:groups': groups } }
+function cognitoAuthorizer({
+  sub = 'test-sub',
+  email = '',
+  name = 'Test User',
+  groups = [],
+  emailVerified = true,
+} = {}) {
+  return {
+    claims: {
+      sub,
+      email,
+      name,
+      email_verified: emailVerified ? 'true' : 'false',
+      'cognito:groups': groups,
+    },
+  }
 }
 
 // Cognito authorizer claims (HTTP API JWT shape).

@@ -1,8 +1,7 @@
 # API
 
-UniVent REST API. The four original routes are extended with organization
-event listing and updates. DynamoDB storage and Cognito authorization are
-defined in `infrastructure/template.yaml`.
+UniVent REST API. DynamoDB storage and Cognito authorization are defined in
+`infrastructure/template.yaml`.
 
 The frontend uses this contract in live mode; browser-local demo mode remains
 available separately.
@@ -11,33 +10,55 @@ available separately.
 | Method | Path | Handler | Auth | Purpose |
 | ------ | ---- | ------- | ---- | ------- |
 | GET | `/events` | `getEvents.js` | Public | List all public events |
-| POST | `/events` | `createEvent.js` | Admin / Organization | Create an event |
-| GET | `/organization/events` | `getOrganizationEvents.js` | Organization (own) / Admin (all) | List organization-owned events |
-| PUT | `/events/{eventId}` | `updateEvent.js` | Organization (own) / Admin (all) | Update an event |
+| POST | `/events` | `createEvent.js` | Admin / approved Organization | Create an event |
+| GET | `/organization/events` | `getOrganizationEvents.js` | Approved Organization (own) / Admin (all) | List organization-owned events |
+| PUT | `/events/{eventId}` | `updateEvent.js` | Approved Organization (own) / Admin (all) | Update an event |
 | POST | `/register` | `register.js` | Student | Register for an event |
-| GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / Organization (own events) / Admin (all) | List registrations (optionally filter by event) |
+| GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / approved Organization (own events) / Admin (all) | List registrations (optionally filter by event) |
+| GET | `/organization-applications` | `organizationApplications.js` | Authenticated applicant (own) / Admin (all) | Read application status or list applications |
+| POST | `/organization-applications` | `organizationApplications.js` | Authenticated verified account | Submit an organization application |
+| PATCH | `/admin/organization-applications/{userSub}` | `organizationApplications.js` | Admin | Approve, reject, or suspend an application |
 
 ### Access rules
 - `GET /events` — public, no identity needed.
-- `POST /events` — administrators and organization accounts may create
-  events. Organization ownership is saved from the verified Cognito `sub`
-  claim; request-body owner fields are ignored. New organization events are
-  published immediately.
-- `GET /organization/events` — an organization sees only events indexed to
-  its verified Cognito `sub`; administrators see all events. Students receive
-  `403`.
-- `PUT /events/{eventId}` — administrators may update any event; an
+- `POST /events` — administrators and organizations with both an
+  `organizations` Cognito group claim and a persisted `APPROVED` application
+  may create events. Organization ownership is saved from the verified
+  Cognito `sub` claim; request-body owner fields are ignored. New organization
+  events are published immediately.
+- `GET /organization/events` — an approved organization sees only events
+  indexed to its verified Cognito `sub`; administrators see all events.
+  Students and pending, rejected, or suspended organizations receive `403`.
+- `PUT /events/{eventId}` — administrators may update any event; an approved
   organization may update only an event whose stored `ownerSub` matches its
   verified Cognito `sub`. Other organizations receive `403`. Capacity cannot
   be reduced below the stored confirmed-registration counter (`409`).
 - `POST /register` — students only. Organizations and administrators receive
   `403`. The body email must match the signed-in account. Ownership (`email`,
   `ownerEmail`, `userId`) is taken from the authenticated principal, never
-  from body fields.
+  from body fields. An account with an organization application is not treated
+  as an eligible Student for this route, even while the application is pending.
 - `GET /registrations` — an administrator sees every registration; a student
-  sees only their own registrations; an organization sees registrations for
-  its own events only. An organization filtering by another event receives
-  `403`. `?eventId=` filters the list for each allowed role.
+  sees only their own registrations; an approved organization sees
+  registrations for its own events only. An organization filtering by another
+  event receives `403`. Accounts with an organization application cannot use
+  the Student registration-list path. `?eventId=` filters the list for each
+  allowed role.
+- `GET /organization-applications` — an authenticated non-admin sees only
+  their own application (or `null` before applying); an Admin sees all
+  applications. `userSub` is returned only in the Admin list.
+- `POST /organization-applications` — requires an authenticated Cognito
+  account whose email is verified and ends in the configured exact college
+  domain (`ves.ac.in` in the template). The submitted official email must
+  exactly match the verified token claim. The user identifier is always the
+  trusted Cognito `sub`; body-supplied identifiers are not accepted.
+- `PATCH /admin/organization-applications/{userSub}` — Admin-only. A decision
+  body has `status` (`APPROVED`, `REJECTED`, or `SUSPENDED`) and optional
+  `decisionReason`; rejecting requires a reason of at least three characters.
+  Approval grants the Cognito `organizations` group and persists `APPROVED`.
+  Rejection/suspension persists the non-approved state before removing the
+  group. Organization API calls also check the application record on every
+  request, so stale group claims alone do not authorize access.
 
 ### Organization event ownership and lifecycle
 
@@ -53,8 +74,54 @@ for multiple representatives to manage the same events.
 
 The live organization workflow supports create, list, edit, and viewing
 registrations for owned events. Creating publishes the event immediately.
-There is no event cancellation, moderation/approval workflow, organization
-profile management, or in-app organization approval portal in this API.
+There is no event cancellation, moderation/approval workflow, or organization
+profile management in this API.
+
+### Organization applications
+
+The organization representative creates a Cognito account through `/org/signup`,
+confirms the email, signs in, and submits the application at `/org/apply`.
+Applications are keyed by Cognito `sub` in `OrganizationApplicationsTable`;
+the conditional write prevents a second application for the same account.
+Valid statuses are `PENDING`, `APPROVED`, `REJECTED`, and `SUSPENDED`.
+
+Submission body:
+
+```json
+{
+  "organizationName": "Robotics Club",
+  "officialEmail": "robotics@ves.ac.in",
+  "representativeName": "Aarav Mehta",
+  "representativeTitle": "Secretary",
+  "representativePhone": "+1 555 010 1234"
+}
+```
+
+The response is `{ "application": { ... } }` with `201`. An applicant's GET
+returns `{ "application": null }` before submission or the saved application;
+an Admin GET returns `{ "applications": [...] }`. Application decisions use
+one of these bodies and return the saved `application` with `200`:
+
+```json
+{ "status": "APPROVED" }
+{ "status": "REJECTED", "decisionReason": "..." }
+{ "status": "SUSPENDED" }
+```
+
+A duplicate submission or conflicting concurrent decision returns `409`.
+
+Only an Admin can list all applications or decide them. A group is granted only
+after the Admin approves. If Cognito group removal fails after a rejection or
+suspension, the API reports `502`; the saved status still blocks organization
+endpoints, and repeating the decision retries group cleanup. Approval requires
+the Lambda execution role to have `cognito-idp:AdminAddUserToGroup`; rejection
+and suspension require `cognito-idp:AdminRemoveUserFromGroup`.
+
+The applications table has only a `userSub` partition key. Admin listing scans
+the table, so this is suitable for the current small project but should move to
+a paginated/indexed review design before application volume grows. Existing
+organization group members without an application record are denied
+organization access until they submit an application and an Admin approves it.
 
 ### Response envelopes
 Reads return a JSON object with one key:
@@ -130,7 +197,8 @@ Every error is JSON with a single `message` field:
 | `403` | signed in but not allowed (role restriction, cross-organization event access, email mismatch) |
 | `404` | unknown event |
 | `405` | wrong HTTP method for the route |
-| `409` | duplicate registration, event full/counter not ready, or capacity reduction below current registrations |
+| `409` | duplicate registration/application, conflicting application decision, event full/counter not ready, or capacity reduction below current registrations |
+| `502` | Cognito group grant/removal failed during an Admin decision |
 | `500` | unexpected server error |
 
 ## CORS
@@ -139,7 +207,7 @@ can call the API:
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Headers: Content-Type,Authorization
-Access-Control-Allow-Methods: GET,POST,PUT,OPTIONS
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,OPTIONS
 Access-Control-Max-Age: 600
 ```
 The origin comes from the `CORS_ORIGIN` environment variable (default `*`).
@@ -188,9 +256,10 @@ from the authorizer claims instead and the headers are not used.
 
 - `memory` (default) — seeded in-process store used by unit tests and the quick
   local server. Not persistent and not shared between Lambda instances.
-- `dynamodb` — the deployed mode. Reads/writes the `Events` and
-  `Registrations` tables. Registration is atomic via `TransactWriteItems`;
-  duplicate and capacity checks are enforced by conditions, not prechecks.
+- `dynamodb` — the deployed mode. Reads/writes the `Events`,
+  `Registrations`, and `OrganizationApplications` tables. Registration is
+  atomic via `TransactWriteItems`; duplicate and capacity checks are enforced
+  by conditions, not prechecks.
 
 The deployed SAM template sets `UNIVENT_STORE=dynamodb`, table names,
 `OwnerEmailIndex`, and `OrganizationOwnerIndex`. The latter is a sparse GSI:
@@ -198,13 +267,11 @@ only records written with `ownerSub` appear in it. Adding the index does not
 rewrite existing items. Table keys and operational details are in
 `docs/phases/PHASE-04-DYNAMODB.md`.
 
-Organization accounts are provisioned by an administrator, not through an
-in-app approval portal. Verify the organization and representative using the
-college's normal process, then use the existing
-`scripts/provision-cognito-user.js --role organization` operator workflow to
-create the Cognito user or explicitly add the `organizations` group to a
-confirmed existing user. Group membership is the authorization source; do
-not accept a client-supplied role or ownership identifier.
+Organization representatives apply through the live API after confirming and
+signing in to their Cognito account. Admins review applications in the
+frontend and decide through the Admin-only API. The group claim and persisted
+application status are both required for organization access. Admin accounts
+are provisioned privately; see `docs/aws-setup.md`.
 
 ## Run it locally
 `sam local start-api` needs the SAM CLI and a running Docker daemon. The
@@ -234,7 +301,7 @@ Content-Type: application/json
 Cache-Control: no-store
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Headers: Content-Type,Authorization
-Access-Control-Allow-Methods: GET,POST,PUT,OPTIONS
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,OPTIONS
 Access-Control-Max-Age: 600
 ```
 ```json
@@ -299,11 +366,10 @@ curl "http://localhost:3000/registrations?eventId=e1" \
 Status `200`. Not signed in: `401`. Unknown `eventId`: `404`.
 
 ## Deferred to later phases
-- AWS deployment of the Phase 4 tables, Phase 5 Cognito resources, and IAM
-  roles — Phase 7.
-- Organization-created events with an approval workflow (draft → pending →
-  published) — later phase; `POST /events` stays admin-only and organization
-  access to registration data is `403` for now.
+- AWS deployment of the application table, routes, Cognito group permissions,
+  and IAM roles — Phase 7.
+- Organization-created event draft/moderation/publish workflow. Approved
+  organizations can create events, which publish immediately.
 - Registration cancellation and individual registration lookup routes.
 - Deployed live API/Cognito verification — Phase 7. Phase 6 wires the frontend
   to this API and sends the Cognito ID token; mock mode remains available.

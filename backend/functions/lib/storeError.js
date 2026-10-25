@@ -7,6 +7,8 @@ const CODES = {
   DUPLICATE_REGISTRATION: 'DUPLICATE_REGISTRATION',
   REGISTRATION_CONFLICT: 'REGISTRATION_CONFLICT',
   CAPACITY_BELOW_REGISTRATIONS: 'CAPACITY_BELOW_REGISTRATIONS',
+  ORGANIZATION_APPLICATION_EXISTS: 'ORGANIZATION_APPLICATION_EXISTS',
+  ORGANIZATION_APPLICATION_CONFLICT: 'ORGANIZATION_APPLICATION_CONFLICT',
 }
 
 const MESSAGES = {
@@ -17,6 +19,10 @@ const MESSAGES = {
   [CODES.REGISTRATION_CONFLICT]: 'Unable to complete the registration right now.',
   [CODES.CAPACITY_BELOW_REGISTRATIONS]:
     'Capacity cannot be lower than the number of confirmed registrations.',
+  [CODES.ORGANIZATION_APPLICATION_EXISTS]:
+    'An organization application already exists for this account.',
+  [CODES.ORGANIZATION_APPLICATION_CONFLICT]:
+    'The organization application changed before this request completed.',
 }
 
 class StoreError extends Error {

@@ -12,6 +12,9 @@ const getOrganizationEvents = require('../functions/getOrganizationEvents')
 const updateEvent = require('../functions/updateEvent')
 const register = require('../functions/register')
 const getRegistrations = require('../functions/getRegistrations')
+const organizationApplications = require('../functions/organizationApplications')
+const cognitoGroups = require('../functions/lib/cognitoGroups')
+const { CODES, StoreError } = require('../functions/lib/storeError')
 
 const ADMIN = devHeaders('admin', 'admin@univent.demo', 'Demo Admin')
 const STUDENT_A = devHeaders('student', 'asha@college.edu', 'Asha Sharma')
@@ -28,6 +31,42 @@ const ORGANIZATION_B = cognitoAuthorizer({
   name: 'Robotics Club',
   groups: ['organizations'],
 })
+const ADMIN_COGNITO = cognitoAuthorizer({
+  sub: 'admin-sub',
+  email: 'admin@univent.demo',
+  name: 'Platform Admin',
+  groups: ['admins'],
+})
+
+function seedApprovedOrganization(userSub, officialEmail, organizationName) {
+  const store = getStore()
+  store.createOrganizationApplication({
+    userSub,
+    organizationName,
+    officialEmail,
+    representativeName: organizationName,
+    representativeTitle: 'Club Representative',
+    representativePhone: '+1 555 010 1234',
+  })
+  return store.updateOrganizationApplicationStatus(
+    userSub,
+    { status: 'APPROVED', decidedBy: 'admin-sub' },
+    ['PENDING'],
+  )
+}
+
+async function withCognitoGroupMocks(replacements, action) {
+  const original = {}
+  for (const [name, implementation] of Object.entries(replacements)) {
+    original[name] = cognitoGroups[name]
+    cognitoGroups[name] = implementation
+  }
+  try {
+    return await action()
+  } finally {
+    Object.assign(cognitoGroups, original)
+  }
+}
 
 const originalEnv = { ...process.env }
 
@@ -135,6 +174,7 @@ describe('POST /events', () => {
   })
 
   it('allows an organization to create an event with trusted Cognito ownership', async () => {
+    seedApprovedOrganization('organization-sub-a', 'codecell@ves.ac.in', 'CodeCell')
     const res = await invoke(createEvent.handler, {
       method: 'POST',
       authorizer: ORGANIZATION_A,
@@ -252,8 +292,355 @@ describe('POST /events', () => {
   })
 })
 
+describe('organization application workflow', () => {
+  const validApplication = {
+    organizationName: 'Robotics Club',
+    officialEmail: 'robotics@ves.ac.in',
+    representativeName: 'Aarav Mehta',
+    representativeTitle: 'Club Secretary',
+    representativePhone: '+1 555 010 1234',
+  }
+  const applicant = cognitoAuthorizer({
+    sub: 'applicant-sub',
+    email: 'robotics@ves.ac.in',
+    name: 'Aarav Mehta',
+  })
+
+  async function submitApplication(authorizer = applicant, body = validApplication) {
+    return invoke(organizationApplications.handler, {
+      method: 'POST',
+      path: '/organization-applications',
+      authorizer,
+      body,
+    })
+  }
+
+  async function decide(userSub, status, decisionReason = '') {
+    return invoke(organizationApplications.handler, {
+      method: 'PATCH',
+      path: `/admin/organization-applications/${userSub}`,
+      pathParameters: { userSub },
+      authorizer: ADMIN_COGNITO,
+      body: { status, decisionReason },
+    })
+  }
+
+  it('creates an application only for a verified Cognito identity and binds it to its sub', async () => {
+    const result = await submitApplication(applicant, {
+      ...validApplication,
+      userSub: 'forged-sub',
+    })
+    assert.equal(result.statusCode, 400)
+    assert.match(result.json.message, /not allowed/i)
+
+    const created = await submitApplication()
+    assert.equal(created.statusCode, 201)
+    assert.equal(created.json.application.status, 'PENDING')
+    assert.equal(created.json.application.userSub, undefined)
+    assert.equal(getStore().getOrganizationApplication('applicant-sub').userSub, 'applicant-sub')
+    assert.equal(getStore().getOrganizationApplication('forged-sub'), null)
+  })
+
+  it('rejects unverified, mismatched, non-Cognito, and wrong-domain application submissions', async () => {
+    const unverified = await submitApplication(
+      cognitoAuthorizer({
+        sub: 'unverified-sub',
+        email: 'robotics@ves.ac.in',
+        emailVerified: false,
+      }),
+    )
+    const mismatched = await submitApplication(applicant, {
+      ...validApplication,
+      officialEmail: 'other@ves.ac.in',
+    })
+    const wrongDomain = await submitApplication(
+      cognitoAuthorizer({ sub: 'wrong-domain', email: 'robotics@gmail.com' }),
+      { ...validApplication, officialEmail: 'robotics@gmail.com' },
+    )
+    const devIdentity = await submitApplication(
+      null,
+      validApplication,
+    )
+    assert.equal(unverified.statusCode, 403)
+    assert.equal(mismatched.statusCode, 400)
+    assert.equal(wrongDomain.statusCode, 400)
+    assert.equal(devIdentity.statusCode, 401)
+  })
+
+  it('prevents duplicate applications for the same Cognito account', async () => {
+    assert.equal((await submitApplication()).statusCode, 201)
+    const duplicate = await submitApplication()
+    assert.equal(duplicate.statusCode, 409)
+    assert.match(duplicate.json.message, /already exists/i)
+  })
+
+  it('lets applicants read only their own application and admins list applications', async () => {
+    await submitApplication()
+    const own = await invoke(organizationApplications.handler, {
+      method: 'GET',
+      path: '/organization-applications',
+      authorizer: applicant,
+    })
+    const admin = await invoke(organizationApplications.handler, {
+      method: 'GET',
+      path: '/organization-applications',
+      authorizer: ADMIN_COGNITO,
+    })
+    const anonymous = await invoke(organizationApplications.handler, {
+      method: 'GET',
+      path: '/organization-applications',
+    })
+    assert.equal(own.statusCode, 200)
+    assert.equal(own.json.application.status, 'PENDING')
+    assert.equal(own.json.application.userSub, undefined)
+    assert.equal(admin.statusCode, 200)
+    assert.equal(admin.json.applications.length, 1)
+    assert.equal(admin.json.applications[0].userSub, 'applicant-sub')
+    assert.equal(anonymous.statusCode, 401)
+  })
+
+  it('allows only an admin to decide applications and requires a rejection reason', async () => {
+    await submitApplication()
+    const forbidden = await invoke(organizationApplications.handler, {
+      method: 'PATCH',
+      pathParameters: { userSub: 'applicant-sub' },
+      authorizer: applicant,
+      body: { status: 'APPROVED' },
+    })
+    const missingReason = await decide('applicant-sub', 'REJECTED')
+    assert.equal(forbidden.statusCode, 403)
+    assert.equal(missingReason.statusCode, 400)
+  })
+
+  it('grants the organizations group only after approval and is retry-safe for group failure', async () => {
+    await submitApplication()
+    let grantedSub = ''
+    const result = await withCognitoGroupMocks({
+      addOrganizationGroup: async (sub) => { grantedSub = sub },
+    }, () => decide('applicant-sub', 'APPROVED'))
+    assert.equal(result.statusCode, 200)
+    assert.equal(grantedSub, 'applicant-sub')
+    assert.equal(getStore().getOrganizationApplication('applicant-sub').status, 'APPROVED')
+
+    await submitApplication(
+      cognitoAuthorizer({ sub: 'grant-fails', email: 'fail@ves.ac.in' }),
+      { ...validApplication, officialEmail: 'fail@ves.ac.in' },
+    )
+    const failed = await withCognitoGroupMocks({
+      addOrganizationGroup: async () => { throw new Error('permission denied') },
+    }, () => decide('grant-fails', 'APPROVED'))
+    assert.equal(failed.statusCode, 502)
+    assert.equal(getStore().getOrganizationApplication('grant-fails').status, 'PENDING')
+  })
+
+  it('allows retrying approval after Cognito group grant failure', async () => {
+    await submitApplication()
+    const failed = await withCognitoGroupMocks({
+      addOrganizationGroup: async () => { throw new Error('temporary permission failure') },
+    }, () => decide('applicant-sub', 'APPROVED'))
+    assert.equal(failed.statusCode, 502)
+    assert.match(failed.json.message, /Cognito access could not be granted/i)
+    assert.equal(getStore().getOrganizationApplication('applicant-sub').status, 'PENDING')
+
+    const retry = await withCognitoGroupMocks({
+      addOrganizationGroup: async () => {},
+    }, () => decide('applicant-sub', 'APPROVED'))
+    assert.equal(retry.statusCode, 200)
+    assert.equal(getStore().getOrganizationApplication('applicant-sub').status, 'APPROVED')
+  })
+
+  for (const status of ['REJECTED', 'SUSPENDED']) {
+    it(`allows retrying ${status.toLowerCase()} after Cognito group removal failure`, async () => {
+      const userSub = `${status.toLowerCase()}-retry-sub`
+      const email = `${status.toLowerCase()}-retry@ves.ac.in`
+      if (status === 'REJECTED') {
+        await submitApplication(
+          cognitoAuthorizer({ sub: userSub, email }),
+          { ...validApplication, officialEmail: email },
+        )
+      } else {
+        seedApprovedOrganization(userSub, email, 'Retry Club')
+      }
+
+      let removeAttempts = 0
+      const decisionReason = status === 'REJECTED' ? 'Application requires correction' : ''
+      const failed = await withCognitoGroupMocks({
+        removeOrganizationGroup: async () => {
+          removeAttempts += 1
+          throw new Error('temporary permission failure')
+        },
+      }, () => decide(userSub, status, decisionReason))
+      assert.equal(failed.statusCode, 502)
+      assert.match(failed.json.message, /decision is saved and access is blocked/i)
+      assert.equal(getStore().getOrganizationApplication(userSub).status, status)
+
+      const retry = await withCognitoGroupMocks({
+        removeOrganizationGroup: async () => { removeAttempts += 1 },
+      }, () => decide(userSub, status, decisionReason))
+      assert.equal(retry.statusCode, 200)
+      assert.equal(retry.json.application.status, status)
+      assert.equal(removeAttempts, 2)
+    })
+  }
+
+  it('does not roll back a concurrent Admin approval after a status conflict', async () => {
+    await submitApplication()
+    const store = getStore()
+    const updateStatus = store.updateOrganizationApplicationStatus
+    let removedGroup = false
+    store.updateOrganizationApplicationStatus = async (...args) => {
+      await updateStatus(...args)
+      throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+    }
+
+    try {
+      const result = await withCognitoGroupMocks({
+        addOrganizationGroup: async () => {},
+        removeOrganizationGroup: async () => { removedGroup = true },
+      }, () => decide('applicant-sub', 'APPROVED'))
+      assert.equal(result.statusCode, 409)
+      assert.equal(getStore().getOrganizationApplication('applicant-sub').status, 'APPROVED')
+      assert.equal(removedGroup, false)
+    } finally {
+      store.updateOrganizationApplicationStatus = updateStatus
+    }
+  })
+
+  it('blocks pending, rejected, and suspended organizations despite stale group claims', async () => {
+    await submitApplication()
+    const pending = await invoke(getOrganizationEvents.handler, {
+      method: 'GET',
+      authorizer: applicant,
+    })
+    assert.equal(pending.statusCode, 403)
+
+    for (const [sub, email, status] of [
+      ['rejected-sub', 'rejected@ves.ac.in', 'REJECTED'],
+      ['suspended-sub', 'suspended@ves.ac.in', 'SUSPENDED'],
+    ]) {
+      seedApprovedOrganization(sub, email, `${status} Club`)
+      await withCognitoGroupMocks({
+        removeOrganizationGroup: async () => {},
+      }, async () => {
+        const rejected = await decide(
+          sub,
+          status,
+          status === 'REJECTED' ? 'Insufficient verification' : '',
+        )
+        assert.equal(rejected.statusCode, 200)
+        const staleTokenAccess = await invoke(getOrganizationEvents.handler, {
+          method: 'GET',
+          authorizer: cognitoAuthorizer({
+            sub,
+            email,
+            groups: ['organizations'],
+          }),
+        })
+        assert.equal(staleTokenAccess.statusCode, 403)
+      })
+    }
+  })
+
+  for (const status of ['PENDING', 'REJECTED', 'SUSPENDED']) {
+    it(`denies all protected organization operations for ${status} applications with a stale organizations claim`, async () => {
+      const userSub = `stale-${status.toLowerCase()}-sub`
+      const email = `stale-${status.toLowerCase()}@ves.ac.in`
+      const store = getStore()
+      store.createOrganizationApplication({
+        userSub,
+        organizationName: `${status} Club`,
+        officialEmail: email,
+        representativeName: `${status} Representative`,
+        representativeTitle: 'Club Representative',
+        representativePhone: '+1 555 010 1234',
+      })
+      if (status !== 'PENDING') {
+        store.updateOrganizationApplicationStatus(
+          userSub,
+          {
+            status,
+            decisionReason: status === 'REJECTED' ? 'Application requires correction' : '',
+            decidedBy: 'admin-sub',
+          },
+          ['PENDING'],
+        )
+      }
+
+      const staleOrganizationToken = cognitoAuthorizer({
+        sub: userSub,
+        email,
+        groups: ['organizations'],
+      })
+      const checks = [
+        ['event creation', createEvent.handler, {
+          method: 'POST',
+          authorizer: staleOrganizationToken,
+          body: { title: 'Blocked Event', date: '2099-11-02', venue: 'Hall 9' },
+        }],
+        ['event listing', getOrganizationEvents.handler, {
+          method: 'GET',
+          authorizer: staleOrganizationToken,
+        }],
+        ['event update', updateEvent.handler, {
+          method: 'PUT',
+          pathParameters: { eventId: 'e1' },
+          authorizer: staleOrganizationToken,
+          body: { title: 'Blocked Update', date: '2099-11-02', venue: 'Hall 9' },
+        }],
+        ['registration listing', getRegistrations.handler, {
+          method: 'GET',
+          authorizer: staleOrganizationToken,
+        }],
+      ]
+
+      for (const [operation, handler, event] of checks) {
+        const result = await invoke(handler, event)
+        assert.equal(result.statusCode, 403, `${status} application should deny ${operation}`)
+      }
+    })
+  }
+
+  it('persists rejection before group cleanup and continues denying access if cleanup fails', async () => {
+    seedApprovedOrganization('revoke-sub', 'revoke@ves.ac.in', 'Revoke Club')
+    const decision = await withCognitoGroupMocks({
+      removeOrganizationGroup: async () => { throw new Error('permission denied') },
+    }, () => decide('revoke-sub', 'REJECTED', 'Application did not meet requirements'))
+    assert.equal(decision.statusCode, 502)
+    assert.equal(getStore().getOrganizationApplication('revoke-sub').status, 'REJECTED')
+
+    const denied = await invoke(getOrganizationEvents.handler, {
+      method: 'GET',
+      authorizer: cognitoAuthorizer({
+        sub: 'revoke-sub',
+        email: 'revoke@ves.ac.in',
+        groups: ['organizations'],
+      }),
+    })
+    assert.equal(denied.statusCode, 403)
+  })
+
+  it('prevents organization applicants from using Student registration APIs', async () => {
+    await submitApplication()
+    const registration = await invoke(register.handler, {
+      method: 'POST',
+      path: '/register',
+      authorizer: applicant,
+      body: { eventId: 'e1', name: 'Aarav Mehta', email: 'robotics@ves.ac.in' },
+    })
+    const registrations = await invoke(getRegistrations.handler, {
+      method: 'GET',
+      path: '/registrations',
+      authorizer: applicant,
+    })
+    assert.equal(registration.statusCode, 403)
+    assert.equal(registrations.statusCode, 403)
+  })
+})
+
 describe('GET /organization/events', () => {
   it('lists only the organization owner events and allows admin oversight', async () => {
+    seedApprovedOrganization('organization-sub-a', 'codecell@ves.ac.in', 'CodeCell')
+    seedApprovedOrganization('organization-sub-b', 'robotics@ves.ac.in', 'Robotics Club')
     const createdA = await invoke(createEvent.handler, {
       method: 'POST',
       authorizer: ORGANIZATION_A,
@@ -310,6 +697,9 @@ describe('PUT /events/{eventId}', () => {
   }
 
   async function createOwnedEvent(authorizer = ORGANIZATION_A) {
+    const sub = authorizer.claims.sub
+    const email = authorizer.claims.email
+    seedApprovedOrganization(sub, email, authorizer.claims.name)
     return invoke(createEvent.handler, {
       method: 'POST',
       authorizer,
@@ -333,6 +723,7 @@ describe('PUT /events/{eventId}', () => {
 
   it('denies another organization and keeps admin update access', async () => {
     const created = await createOwnedEvent()
+    seedApprovedOrganization('organization-sub-b', 'robotics@ves.ac.in', 'Robotics Club')
     const denied = await invoke(updateEvent.handler, {
       method: 'PUT',
       pathParameters: { eventId: created.json.eventId },
@@ -723,6 +1114,8 @@ describe('GET /registrations', () => {
   })
 
   it('limits organization registrations to its own events and denies another org event filter', async () => {
+    seedApprovedOrganization('organization-sub-a', 'codecell@ves.ac.in', 'CodeCell')
+    seedApprovedOrganization('organization-sub-b', 'robotics@ves.ac.in', 'Robotics Club')
     const eventA = await invoke(createEvent.handler, {
       method: 'POST',
       authorizer: ORGANIZATION_A,

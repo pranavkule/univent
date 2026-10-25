@@ -9,6 +9,14 @@
 // internals with fetch() against API Gateway/Lambda/DynamoDB without
 // rewriting the UI.
 
+import {
+  API_MODE,
+  decideOrganizationApplication,
+  getOrganizationApplication,
+  listOrganizationApplications,
+  submitOrganizationApplication as submitApplicationApi,
+} from './api.js'
+
 const ORGS_KEY = 'univent.organizations.v1'
 
 function readStored() {
@@ -95,6 +103,12 @@ function loadOrganizations() {
 
 export async function getOrganizationByEmail(email) {
   const clean = (email || '').trim().toLowerCase()
+  if (API_MODE === 'live') {
+    const application = await getOrganizationApplication()
+    return application && application.officialEmail.toLowerCase() === clean
+      ? normalizeLiveApplication(application)
+      : null
+  }
   const orgs = loadOrganizations()
   const org = orgs.find((o) => o.contactEmail.toLowerCase() === clean)
   return org ? { ...org } : null
@@ -102,16 +116,78 @@ export async function getOrganizationByEmail(email) {
 
 // Admin workspace: list every organization application.
 export async function listOrganizations() {
+  if (API_MODE === 'live') {
+    const applications = await listOrganizationApplications()
+    return applications.map(normalizeLiveApplication)
+  }
   return loadOrganizations().map((o) => ({ ...o }))
 }
 
 export const ORG_APPROVAL_STATUSES = ['pending', 'approved', 'rejected', 'suspended']
 
+function normalizeLiveApplication(application) {
+  return {
+    id: application.userSub || application.officialEmail,
+    userSub: application.userSub || '',
+    name: application.organizationName,
+    description: '',
+    contactEmail: application.officialEmail,
+    contactName: application.representativeName,
+    representativeTitle: application.representativeTitle,
+    representativePhone: application.representativePhone,
+    approvalStatus: String(application.status || '').toLowerCase(),
+    appliedAt: application.appliedAt || '',
+    decisionReason: application.decisionReason || '',
+  }
+}
+
+export async function getMyOrganizationApplication(email) {
+  const clean = (email || '').trim().toLowerCase()
+  if (API_MODE === 'live') {
+    const application = await getOrganizationApplication()
+    return application ? normalizeLiveApplication(application) : null
+  }
+  return getOrganizationByEmail(clean)
+}
+
+export async function submitOrganizationApplication(input) {
+  if (API_MODE === 'live') {
+    return normalizeLiveApplication(await submitApplicationApi(input))
+  }
+  const email = String(input.officialEmail || '').trim().toLowerCase()
+  const orgs = loadOrganizations()
+  if (orgs.some((org) => org.contactEmail.toLowerCase() === email)) {
+    throw new Error('An organization application already exists for this account.')
+  }
+  const application = normalizeOrg({
+    id: `mock-${email}`,
+    name: input.organizationName,
+    representativeTitle: input.representativeTitle,
+    representativePhone: input.representativePhone,
+    contactEmail: email,
+    contactName: input.representativeName,
+    approvalStatus: 'pending',
+    appliedAt: new Date().toISOString(),
+    decisionReason: '',
+  })
+  writeStored([...orgs, application])
+  return { ...application }
+}
+
 // Admin-only status transition (mock). Approving/suspending/reactivating
 // takes effect immediately in this browser; rejecting requires a reason so
 // the organization knows what to fix. The real backend must enforce this.
-export async function setOrganizationStatus(email, status, reason = '') {
-  const cleanEmail = (email || '').trim().toLowerCase()
+export async function setOrganizationStatus(organization, status, reason = '') {
+  if (API_MODE === 'live') {
+    const userSub = typeof organization === 'string' ? organization : organization?.userSub
+    if (!userSub) throw new Error('The application is missing its trusted user identifier.')
+    return normalizeLiveApplication(
+      await decideOrganizationApplication(userSub, status.toUpperCase(), reason),
+    )
+  }
+  const cleanEmail = String(
+    typeof organization === 'string' ? organization : organization?.contactEmail || '',
+  ).trim().toLowerCase()
   const next = (status || '').trim().toLowerCase()
   if (!ORG_APPROVAL_STATUSES.includes(next)) {
     throw new Error('Unknown approval status.')
@@ -143,6 +219,9 @@ export function validateOrganizationInput({ name, description }) {
 }
 
 export async function updateOrganization(email, patch) {
+  if (API_MODE === 'live') {
+    throw new Error('Organization profile edits are not supported by the live API.')
+  }
   const cleanEmail = (email || '').trim().toLowerCase()
   const input = {
     name: (patch?.name || '').trim(),

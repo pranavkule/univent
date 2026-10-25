@@ -30,6 +30,8 @@ import OrgEventForm from './pages/org/OrgEventForm.jsx'
 import OrgEvents from './pages/org/OrgEvents.jsx'
 import OrgProfile from './pages/org/OrgProfile.jsx'
 import OrgRegistrations from './pages/org/OrgRegistrations.jsx'
+import OrgSignUp from './pages/OrgSignUp.jsx'
+import OrgApplication from './pages/OrgApplication.jsx'
 
 export default function App() {
   return (
@@ -49,8 +51,13 @@ export default function App() {
             />
             <Route path="/confirmation/:id" element={<Confirmation />} />
             <Route path="/signup" element={<SignUp />} />
+            <Route path="/org/signup" element={<OrgSignUp />} />
             <Route path="/confirm-signup" element={<ConfirmSignUp />} />
             <Route path="/signin" element={<SignIn />} />
+            <Route
+              path="/org/apply"
+              element={<ProtectedRoute roles={['student', 'organization']}><OrgApplication /></ProtectedRoute>}
+            />
             <Route
               path="/dashboard"
               element={<ProtectedRoute roles={['student']}><Dashboard /></ProtectedRoute>}

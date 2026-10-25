@@ -91,6 +91,9 @@ export default function SignUp() {
       <p className="muted">
         Already have an account? <Link to="/signin" state={{ from }}>Sign in</Link>
       </p>
+      <p className="muted">
+        Organization representative? <Link to="/org/signup">Create an account and apply</Link>.
+      </p>
     </div>
   )
 }

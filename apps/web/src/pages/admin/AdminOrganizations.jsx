@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
 import { ORG_APPROVAL_STATUSES, listOrganizations, setOrganizationStatus } from '../../services/organizations.js'
+import { API_MODE } from '../../services/api.js'
 
-// Organization management: review applications, approve/reject (a reason is
-// required for rejections), and suspend or reactivate approved entries.
-// Sensitive actions always ask for confirmation. Mock data only.
+// Organization management: review applications and apply confirmed admin
+// decisions through the live API or the isolated local mock store.
 export default function AdminOrganizations() {
   const [orgs, setOrgs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -16,6 +16,7 @@ export default function AdminOrganizations() {
   const [rejectTarget, setRejectTarget] = useState(null)
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState('')
+  const decisionInProgress = busy !== null
 
   async function refresh() {
     const list = await listOrganizations()
@@ -45,15 +46,18 @@ export default function AdminOrganizations() {
     })
   }, [orgs, query, statusFilter])
 
-  async function runAction(email, status, confirmText, reasonValue = '') {
+  async function runAction(organization, status, confirmText, reasonValue = '') {
     if (!window.confirm(confirmText)) return
+    const email = organization.contactEmail
     setBusy(email)
     setNotice('')
     setError('')
     try {
-      await setOrganizationStatus(email, status, reasonValue)
+      await setOrganizationStatus(organization, status, reasonValue)
       await refresh()
-      setNotice(`Organization ${status}. Demo only — stored in this browser, not in AWS.`)
+      setNotice(API_MODE === 'live'
+        ? `Organization application ${status}.`
+        : `Organization ${status}. Demo only — stored in this browser, not in AWS.`)
       setRejectTarget(null)
       setReason('')
     } catch (err) {
@@ -70,7 +74,7 @@ export default function AdminOrganizations() {
       return
     }
     setReasonError('')
-    runAction(rejectTarget.contactEmail, 'rejected', `Reject the application from "${rejectTarget.name}"?`, reason.trim())
+    runAction(rejectTarget, 'rejected', `Reject the application from "${rejectTarget.name}"?`, reason.trim())
   }
 
   if (loading) return <div className="skeleton">Loading organizations…</div>
@@ -78,7 +82,8 @@ export default function AdminOrganizations() {
   return (
     <>
       <p className="muted org-sub">
-        {orgs.length} organization{orgs.length === 1 ? '' : 's'} on record. Mock data — stored in this browser only.
+        {orgs.length} organization application{orgs.length === 1 ? '' : 's'} on record.{' '}
+        {API_MODE === 'live' ? 'Loaded from the application API.' : 'Mock data — stored in this browser only.'}
       </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
@@ -122,6 +127,8 @@ export default function AdminOrganizations() {
                   </td>
                   <td>
                     {o.contactName || '—'}
+                    {o.representativeTitle && <><br /><span className="muted">{o.representativeTitle}</span></>}
+                    {o.representativePhone && <><br /><span className="muted">{o.representativePhone}</span></>}
                     <br />
                     <span className="muted">{o.contactEmail}</span>
                   </td>
@@ -132,15 +139,15 @@ export default function AdminOrganizations() {
                         <button
                           type="button"
                           className="btn btn-sm"
-                          disabled={busy === o.contactEmail}
-                          onClick={() => runAction(o.contactEmail, 'approved', `Approve "${o.name}" as an organization?`)}
+                          disabled={decisionInProgress}
+                          onClick={() => runAction(o, 'approved', `Approve "${o.name}" as an organization?`)}
                         >
                           {busy === o.contactEmail ? 'Working…' : 'Approve'}
                         </button>
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
-                          disabled={busy === o.contactEmail}
+                          disabled={decisionInProgress}
                           onClick={() => { setRejectTarget(o); setReason(''); setReasonError(''); setNotice('') }}
                         >
                           Reject
@@ -151,8 +158,8 @@ export default function AdminOrganizations() {
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        disabled={busy === o.contactEmail}
-                        onClick={() => runAction(o.contactEmail, 'suspended', `Suspend "${o.name}"? Its events stay listed but approval is revoked in this mock.`)}
+                        disabled={decisionInProgress}
+                        onClick={() => runAction(o, 'suspended', `Suspend "${o.name}"? Organization API access will be revoked.`)}
                       >
                         {busy === o.contactEmail ? 'Working…' : 'Suspend'}
                       </button>
@@ -161,8 +168,8 @@ export default function AdminOrganizations() {
                       <button
                         type="button"
                         className="btn btn-sm"
-                        disabled={busy === o.contactEmail}
-                        onClick={() => runAction(o.contactEmail, 'approved', `Reactivate "${o.name}"?`)}
+                        disabled={decisionInProgress}
+                        onClick={() => runAction(o, 'approved', `Reactivate "${o.name}"?`)}
                       >
                         {busy === o.contactEmail ? 'Working…' : 'Reactivate'}
                       </button>
@@ -171,8 +178,8 @@ export default function AdminOrganizations() {
                       <button
                         type="button"
                         className="btn btn-sm"
-                        disabled={busy === o.contactEmail}
-                        onClick={() => runAction(o.contactEmail, 'approved', `Approve "${o.name}" after all?`)}
+                        disabled={decisionInProgress}
+                        onClick={() => runAction(o, 'approved', `Approve "${o.name}" after all?`)}
                       >
                         {busy === o.contactEmail ? 'Working…' : 'Approve'}
                       </button>
@@ -195,16 +202,17 @@ export default function AdminOrganizations() {
               id="admin-reject-reason"
               rows="3"
               value={reason}
+              disabled={decisionInProgress}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Missing faculty advisor details"
             />
             {reasonError && <span className="field-error" role="alert">{reasonError}</span>}
           </div>
           <div className="org-form-actions">
-            <button type="submit" className="btn" disabled={busy === rejectTarget.contactEmail}>
+            <button type="submit" className="btn" disabled={decisionInProgress}>
               {busy === rejectTarget.contactEmail ? 'Rejecting…' : 'Confirm rejection'}
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => { setRejectTarget(null); setReason('') }}>
+            <button type="button" className="btn btn-secondary" disabled={decisionInProgress} onClick={() => { setRejectTarget(null); setReason('') }}>
               Cancel
             </button>
           </div>

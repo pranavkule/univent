@@ -175,6 +175,49 @@ describe('live API transport', () => {
     assert.equal(updated.title, 'Changed')
   })
 
+  it('submits, reads, lists, and decides organization applications with authorization', async () => {
+    const calls = []
+    const application = {
+      userSub: 'applicant-sub',
+      organizationName: 'Robotics Club',
+      officialEmail: 'robotics@ves.ac.in',
+      status: 'PENDING',
+    }
+    const api = createLiveApi({
+      baseUrl: 'https://api.example.test',
+      getAuthHeaders: cognitoHeaders,
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        if (init.method === 'POST') return jsonResponse(201, { application })
+        if (init.method === 'PATCH') return jsonResponse(200, { application: { ...application, status: 'APPROVED' } })
+        if (url.endsWith('/organization-applications') && calls.length === 2) {
+          return jsonResponse(200, { application })
+        }
+        if (url.endsWith('/organization-applications')) return jsonResponse(200, { applications: [application] })
+        return jsonResponse(404, { message: 'Not found.' })
+      },
+    })
+    const details = {
+      organizationName: 'Robotics Club',
+      officialEmail: 'robotics@ves.ac.in',
+      representativeName: 'Aarav Mehta',
+      representativeTitle: 'Secretary',
+      representativePhone: '+1 555 010 1234',
+    }
+
+    assert.equal((await api.submitOrganizationApplication(details)).status, 'PENDING')
+    assert.equal((await api.getOrganizationApplication()).status, 'PENDING')
+    assert.equal((await api.listOrganizationApplications()).length, 1)
+    assert.equal((await api.decideOrganizationApplication('applicant/sub', 'APPROVED')).status, 'APPROVED')
+    assert.equal(calls.length, 4)
+    assert.equal(calls[0].url, 'https://api.example.test/organization-applications')
+    assert.deepEqual(JSON.parse(calls[0].init.body), details)
+    assert.ok(calls.every((call) => call.init.headers.Authorization))
+    assert.equal(calls[3].url, 'https://api.example.test/admin/organization-applications/applicant%2Fsub')
+    assert.equal(calls[3].init.method, 'PATCH')
+    assert.deepEqual(JSON.parse(calls[3].init.body), { status: 'APPROVED', decisionReason: '' })
+  })
+
   it('surfaces backend messages and status codes', async () => {
     const api = createLiveApi({
       baseUrl: 'https://api.example.test',

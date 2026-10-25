@@ -13,6 +13,10 @@ const {
 } = require('./lib/principal')
 const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
+const {
+  hasOrganizationApplication,
+  isApprovedOrganization,
+} = require('./lib/organizationAccess')
 
 exports.handler = async (event) => {
   const method = requestMethod(event)
@@ -25,10 +29,6 @@ exports.handler = async (event) => {
   if (!hasRole(principal, ROLES.ADMIN, ROLES.STUDENT, ROLES.ORGANIZATION)) {
     return error(403, 'This account cannot view registrations.')
   }
-  if (isOrganization(principal) && !principal.sub) {
-    return error(403, 'The organization account has no trusted user identifier.')
-  }
-
   const rawEventId = queryParams(event).eventId
   let eventId = null
   if (rawEventId !== undefined && rawEventId !== null) {
@@ -38,6 +38,18 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore()
+    if (
+      isOrganization(principal) &&
+      !(await isApprovedOrganization(principal, store))
+    ) {
+      return error(403, 'An approved organization application is required to view event registrations.')
+    }
+    if (
+      hasRole(principal, ROLES.STUDENT) &&
+      (await hasOrganizationApplication(principal, store))
+    ) {
+      return error(403, 'Organization applicants cannot view student registrations using this account.')
+    }
     if (eventId) {
       const eventRecord = await store.getEvent(eventId)
       if (!eventRecord) return error(404, 'Event not found.')

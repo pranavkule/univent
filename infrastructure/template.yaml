@@ -145,6 +145,19 @@ Resources:
       SSESpecification:
         SSEEnabled: true
 
+  OrganizationApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userSub
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userSub
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
   PreSignUpRole:
     Type: AWS::IAM::Role
     Condition: CreateExecutionRoles
@@ -186,6 +199,37 @@ Resources:
                   - dynamodb:Query
                 Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
 
+  OrganizationEventsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadOrganizationEventsAndApproval
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt OrganizationApplicationsTable.Arn
+
   CreateEventRole:
     Type: AWS::IAM::Role
     Condition: CreateExecutionRoles
@@ -214,6 +258,10 @@ Resources:
                 Action:
                   - dynamodb:Query
                 Resource: !Sub '${EventsTable.Arn}/index/OrganizationOwnerIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt OrganizationApplicationsTable.Arn
 
   RegisterRole:
     Type: AWS::IAM::Role
@@ -244,6 +292,10 @@ Resources:
                   - dynamodb:PutItem
                   - dynamodb:TransactWriteItems
                 Resource: !GetAtt RegistrationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt OrganizationApplicationsTable.Arn
 
   GetRegistrationsRole:
     Type: AWS::IAM::Role
@@ -281,6 +333,41 @@ Resources:
                 Action:
                   - dynamodb:Scan
                 Resource: !GetAtt RegistrationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt OrganizationApplicationsTable.Arn
+
+  OrganizationApplicationsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ManageOrganizationApplications
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt OrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminAddUserToGroup
+                  - cognito-idp:AdminRemoveUserFromGroup
+                Resource: !GetAtt UserPool.Arn
 
   UniventApi:
     Type: AWS::Serverless::Api
@@ -299,18 +386,18 @@ Resources:
             Headers:
               Access-Control-Allow-Origin: "'*'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization'"
-              Access-Control-Allow-Methods: "'GET,POST,PUT,OPTIONS'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,PATCH,OPTIONS'"
         ACCESS_DENIED:
           StatusCode: 403
           ResponseParameters:
             Headers:
               Access-Control-Allow-Origin: "'*'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization'"
-              Access-Control-Allow-Methods: "'GET,POST,PUT,OPTIONS'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,PATCH,OPTIONS'"
       Cors:
         AllowOrigin: "'*'"
         AllowHeaders: "'Content-Type,Authorization'"
-        AllowMethods: "'GET,POST,PUT,OPTIONS'"
+        AllowMethods: "'GET,POST,PUT,PATCH,OPTIONS'"
 
   PreSignUpFunction:
     Type: AWS::Serverless::Function
@@ -365,6 +452,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
       Events:
         CreateEvent:
           Type: Api
@@ -381,13 +469,14 @@ Resources:
       Description: GET /organization/events - list organization-owned events
       CodeUri: ../backend/functions/
       Handler: getOrganizationEvents.handler
-      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt GetEventsRole.Arn]
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt OrganizationEventsRole.Arn]
       Environment:
         Variables:
           UNIVENT_STORE: dynamodb
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
       Events:
         ListOrganizationEvents:
           Type: Api
@@ -411,6 +500,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
       Events:
         UpdateEvent:
           Type: Api
@@ -434,6 +524,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
       Events:
         Register:
           Type: Api
@@ -458,6 +549,7 @@ Resources:
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
       Events:
         ListRegistrations:
           Type: Api
@@ -465,6 +557,47 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /registrations
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  OrganizationApplicationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Submit, review, and decide persisted organization applications
+      CodeUri: ../backend/functions/
+      Handler: organizationApplications.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt OrganizationApplicationsRole.Arn]
+      Environment:
+        Variables:
+          UNIVENT_STORE: dynamodb
+          EVENTS_TABLE: !Ref EventsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          ALLOWED_SIGNUP_DOMAIN: ves.ac.in
+      Events:
+        ListOrGetApplications:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /organization-applications
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+        SubmitApplication:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /organization-applications
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+        DecideApplication:
+          Type: Api
+          Properties:
+            RestApiId: !Ref UniventApi
+            Path: /admin/organization-applications/{userSub}
+            Method: PATCH
             Auth:
               Authorizer: CognitoAuthorizer
 
@@ -484,6 +617,9 @@ Outputs:
   EventsTableName:
     Description: DynamoDB events table name
     Value: !Ref EventsTable
+  OrganizationApplicationsTableName:
+    Description: DynamoDB table for verified organization applications and decisions
+    Value: !Ref OrganizationApplicationsTable
   RegistrationsTableName:
     Description: DynamoDB registrations table name
     Value: !Ref RegistrationsTable

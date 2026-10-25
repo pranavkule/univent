@@ -40,6 +40,34 @@ export function updateEvent(...args) {
   return impl.updateEvent(...args)
 }
 
+export function getOrganizationApplication(...args) {
+  if (API_MODE !== 'live') {
+    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
+  }
+  return impl.getOrganizationApplication(...args)
+}
+
+export function submitOrganizationApplication(...args) {
+  if (API_MODE !== 'live') {
+    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
+  }
+  return impl.submitOrganizationApplication(...args)
+}
+
+export function listOrganizationApplications(...args) {
+  if (API_MODE !== 'live') {
+    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
+  }
+  return impl.listOrganizationApplications(...args)
+}
+
+export function decideOrganizationApplication(...args) {
+  if (API_MODE !== 'live') {
+    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
+  }
+  return impl.decideOrganizationApplication(...args)
+}
+
 export function createRegistration(...args) {
   return impl.createRegistration(...args)
 }

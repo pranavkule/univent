@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../components/AuthProvider.jsx'
 import { ORG_EDITABLE_FIELDS, getOrganizationByEmail, updateOrganization, validateOrganizationInput } from '../../services/organizations.js'
+import { API_MODE } from '../../services/api.js'
 
-// Organization profile. Only name and description are editable here;
-// contact email and approval status are read-only (Admin-controlled).
-// Mock data only — stored in this browser, not in AWS.
+// Organization profile. Live mode shows the approved application details;
+// profile editing remains available only in the local mock workflow.
 export default function OrgProfile() {
   const { user } = useAuth()
   const [org, setOrg] = useState(null)
@@ -22,7 +22,7 @@ export default function OrgProfile() {
       .then((o) => {
         if (cancelled) return
         setOrg(o)
-        if (o) setValues({ name: o.name, description: o.description })
+        if (o) setValues({ name: o.name, description: o.description || '' })
       })
       .catch((err) => {
         if (!cancelled) setServerError(err.message || 'Could not load the profile.')
@@ -73,7 +73,11 @@ export default function OrgProfile() {
 
   return (
     <>
-      <p className="muted org-sub">How your organization appears to students and admins. Mock data — stored in this browser only.</p>
+      <p className="muted org-sub">
+        {API_MODE === 'live'
+          ? 'Verified application details stored by the organization application API.'
+          : 'Mock data — stored in this browser only.'}
+      </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {serverError && <div className="alert alert-error" role="alert">{serverError}</div>}
 
@@ -88,12 +92,19 @@ export default function OrgProfile() {
           <p className="muted">{org.description}</p>
           <dl className="facts">
             <div><dt>Contact</dt><dd>{org.contactEmail}</dd></div>
+            {org.contactName && <div><dt>Representative</dt><dd>{org.contactName}</dd></div>}
+            {org.representativeTitle && <div><dt>Role</dt><dd>{org.representativeTitle}</dd></div>}
+            {org.representativePhone && <div><dt>Phone</dt><dd>{org.representativePhone}</dd></div>}
             <div><dt>Approval</dt><dd>Controlled by Admin (read-only here)</dd></div>
           </dl>
-          <p className="muted org-hint">Editable fields in this app: {ORG_EDITABLE_FIELDS.join(', ')}.</p>
-          <button type="button" className="btn btn-secondary" onClick={() => { setEditing(true); setNotice('') }}>
-            Edit Profile
-          </button>
+          {API_MODE === 'mock' && (
+            <>
+              <p className="muted org-hint">Editable fields in this mock: {ORG_EDITABLE_FIELDS.join(', ')}.</p>
+              <button type="button" className="btn btn-secondary" onClick={() => { setEditing(true); setNotice('') }}>
+                Edit Profile
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <form className="form org-form" onSubmit={handleSave} noValidate>

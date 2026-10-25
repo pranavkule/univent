@@ -3,9 +3,10 @@
 Order of work. Details per phase live in `docs/phases/`. The project owner
 reports that the backend is deployed in `us-east-1` and the Cognito student
 login/event-registration flow has passed a live test. This repository audit
-does not access AWS; the organization API additions and Events-table GSI still
-need to be deployed and tested. `sam local` does not exercise the Cognito
-authorizer.
+does not access AWS; the organization application workflow, table, IAM
+permissions, and APIs described here still need to be deployed and tested.
+`sam local` does not exercise the Cognito authorizer or AWS Academy IAM
+permissions.
 
 ## Prereqs
 - AWS account + AWS CLI configured, SAM CLI installed, Node 22 (Lambda runtime
@@ -16,28 +17,41 @@ authorizer.
 ## Order
 1. **API + Lambda (Phase 3)** — define the routes in
    `infrastructure/template.yaml`; test with `sam local start-api`.
-2. **DynamoDB (Phase 4)** — implemented in the template: `Events` and
-   `Registrations` tables, the registration-owner GSI and organization-event
-   owner GSI, per-function least-privilege roles,
+2. **DynamoDB (Phase 4)** — implemented in the template: `Events`,
+   `Registrations`, and `OrganizationApplications` tables, the
+   registration-owner GSI and organization-event owner GSI, per-function
+   least-privilege roles,
    table env vars and `UNIVENT_STORE=dynamodb`. Deploy happens in Phase 7.
    - Leave `LambdaExecutionRoleArn` at its default sentinel to create the
      least-privilege roles (requires `CAPABILITY_IAM`).
-   - For AWS Academy, pass the `LabRole` ARN; that role must already allow the
-     required DynamoDB actions and the caller needs `iam:PassRole`.
+   - For AWS Academy, pass the `LabRole` ARN only after confirming it allows
+     the required DynamoDB actions and the organization decision operations
+     `cognito-idp:AdminAddUserToGroup` and
+     `cognito-idp:AdminRemoveUserFromGroup` on this User Pool. The caller needs
+     `iam:PassRole`. Learner Lab permissions are not verified by local checks.
    - After deployment, run the idempotent seed script and then reconcile
      counters if you imported pre-existing data. See
      `docs/phases/PHASE-04-DYNAMODB.md`.
 3. **Cognito (Phase 5)** — implemented in the template:
    - User Pool, public app client, `admins`/`organizations` groups.
-   - PreSignUp trigger restricts student self sign-up to exact `@ves.ac.in`.
+   - PreSignUp trigger restricts student and organization representative
+     self-sign-up to exact `@ves.ac.in`.
    - Email-code confirmation is required; there is no auto-confirm.
-   - The authorizer protects `POST /events`, `GET /organization/events`,
-     `PUT /events/{eventId}`, `POST /register`, and `GET /registrations`;
-     `GET /events` stays public.
+   - `GET /events` stays public. The authorizer protects all other API routes,
+     including organization application submission/review.
+   - `POST /organization-applications` ties an application to the verified
+     Cognito `sub` and verified official email. Admins review and decide
+     applications at `/admin/organizations`; the API grants the `organizations`
+     group only after approval.
+   - Organization event APIs require both the Cognito group and a persisted
+     `APPROVED` application state. Rejection/suspension remains effective even
+     before a stale ID token loses its group claim.
    - The Events table's `OrganizationOwnerIndex` is sparse. Creating this GSI
      does not rewrite seeded events; only events created after the change have
      the trusted `ownerSub` field and appear in organization listings.
-   - Deploy-time outputs: `UserPoolId`, `UserPoolClientId`, `CognitoRegion`.
+   - Deploy-time outputs: `UserPoolId`, `UserPoolClientId`, `CognitoRegion`,
+     `OrganizationApplicationsTableName`, and the existing event/registration
+     table outputs.
 4. **Deploy (Phase 7)** — follow the PowerShell preflight, deployment gates,
    output handling, and acceptance checklist in
    `docs/phases/PHASE-07-DEPLOYMENT.md`. Do not deploy until the AWS Academy
@@ -68,26 +82,30 @@ VITE_COGNITO_CLIENT_ID=
 - Set `VITE_DEV_AUTH=true` only when the frontend talks to
   `scripts/dev-api.js`; deployed Lambda ignores dev identity headers.
 
-## Privileged account provisioning
-There is no in-app organization approval portal. An Admin must first verify
-the organization and its representative through the college's normal process,
-then create the account or assign the Cognito `organizations` group with the
-operator script. This group membership—not a frontend role label—authorizes
-organization API calls.
+## Organization applications and private Admin provisioning
+Organization representatives self-register at `/org/signup` with an official
+`@ves.ac.in` email and password, confirm the email, then sign in and submit
+organization and representative details at `/org/apply`. An Admin reviews
+applications in the Admin > Organizations screen. The backend persists
+`PENDING`/`APPROVED`/`REJECTED`/`SUSPENDED` state and only grants the Cognito
+`organizations` group after approval. Do not manually add an organization to
+the group as a substitute for approval. Existing group-only organization
+accounts remain blocked until they submit an application and an Admin approves
+it.
 
-Create organization/admin users with the operator script, not public sign-up.
-The commands below use PowerShell:
+Admin accounts are provisioned privately through the operator script. The
+commands below use PowerShell:
 
 ```powershell
 $env:COGNITO_USER_POOL_ID = '<pool-id>'
 $env:AWS_REGION = '<region>'
 $securePassword = Read-Host 'Temporary account password' -AsSecureString
 $env:UNIVENT_PROVISION_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
-node scripts/provision-cognito-user.js --email 'codecell@ves.ac.in' --name 'CodeCell' --role organization
+node scripts/provision-cognito-user.js --email 'admin@ves.ac.in' --name 'UniVent Admin' --role admin
 Remove-Item Env:UNIVENT_PROVISION_PASSWORD
 ```
 
-- Use `--role admin` for platform administrators.
+- Public sign-up never grants a privileged group.
 - Existing accounts require `--update-existing`; the script refuses to replace
   a conflicting privileged group silently.
 - The password is taken from the environment, set as permanent, and never
@@ -96,7 +114,8 @@ Remove-Item Env:UNIVENT_PROVISION_PASSWORD
 - Install the script dependency once: `npm --prefix scripts install`.
 - For existing confirmed accounts, pass `--update-existing`; users should
   sign out and back in after group assignment to receive the updated group
-  claim in their ID token.
+  claim in their ID token. Organization APIs still check the saved approval
+  state for every request.
 
 New organization events are publicly visible immediately. Event moderation,
 cancellation, and organization profile management are not implemented.
@@ -108,5 +127,6 @@ identifier is added to the identity model.
 - API Gateway URL, User Pool ID, app client ID, region, table names.
 - Never commit secrets or tokens — IDs and URLs only.
 - The owner reports successful live student login and event registration.
-  Organization event ownership, access denial, and the new GSI remain to be
-  verified after updating the stack.
+  Organization applications, group synchronization, event ownership, access
+  denial, and the new application table/GSI behavior remain to be verified
+  after updating the stack.

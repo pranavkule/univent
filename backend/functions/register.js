@@ -12,6 +12,7 @@ const { getStore } = require('./lib/store')
 const { publicRegistration } = require('./lib/serializers')
 const { registrationClosedReason } = require('./lib/eventTiming')
 const { CODES, StoreError } = require('./lib/storeError')
+const { hasOrganizationApplication } = require('./lib/organizationAccess')
 
 function storeErrorResponse(err) {
   if (!(err instanceof StoreError)) return null
@@ -51,6 +52,9 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore()
+    if (await hasOrganizationApplication(principal, store)) {
+      return error(403, 'Organization applicants cannot register for events using this account.')
+    }
 
     const eventRecord = await store.getEvent(values.eventId)
     if (!eventRecord) return error(404, 'Event not found.')

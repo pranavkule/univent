@@ -68,6 +68,7 @@ describe('principal resolution', () => {
       claimsEvent({
         sub: 'sub-2',
         email: 'codecell@ves.ac.in',
+        email_verified: 'true',
         'cognito:groups': 'organizations',
       }),
     )
@@ -75,6 +76,7 @@ describe('principal resolution', () => {
     assert.equal(principal.role, ROLES.ORGANIZATION)
     assert.equal(isOrganization(principal), true)
     assert.equal(hasRole(principal, ROLES.ORGANIZATION), true)
+    assert.equal(principal.emailVerified, true)
   })
 
   it('defaults users without a privileged group to student', () => {

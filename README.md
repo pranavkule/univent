@@ -2,12 +2,15 @@
 
 UniVent is a cloud-based event registration and management application designed for colleges, universities, and organizations. It allows users to explore events, register online, and receive registration confirmations through a simple web interface.
 
-Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The Phase 3 API, Phase 4 DynamoDB storage, and Phase 5 Cognito authentication are implemented and verified locally. Phase 6 connects the frontend data seam to that API while keeping a browser-local mock mode; auth can run in mock or Cognito mode. The project demonstrates how AWS serverless services can be integrated to build a scalable application without managing traditional servers.
+Serverless college event registration and management system built with React + Vite on the frontend and AWS serverless on the backend. The API, DynamoDB storage, Cognito authentication, and organization application/approval workflow are implemented locally. The project owner reports a deployed AWS Academy backend in `us-east-1` and successful Student login/registration; the organization workflow in the current source has not been deployed or live-tested. The frontend keeps a separate browser-local mock mode for development.
 
 ## What it does (scope)
 - Students browse college events, view details, and register after signing in.
 - Participants view their own registration history; cancellation remains a
   mock-mode demo feature until the backend exposes a cancel route.
+- Organization representatives self-register and apply with a verified
+  college email; Admin approval is required before they can manage events or
+  view registrations for their own events.
 - The frontend data seam supports the API Gateway/Lambda API or browser-local
   mock data. DynamoDB storage and Cognito auth are implemented locally.
   Deployment and live checks remain Phase 7.
@@ -47,7 +50,7 @@ Serverless college event registration and management system built with React + V
 
 ### Cloud Features
 - Serverless backend execution.
-- Persistent storage of event and registration data.
+- Persistent storage of event, registration, and organization-application data.
 - Managed user authentication.
 - Centralized backend logs and error monitoring.
 - Cloud-hosted frontend accessible through a web browser.
@@ -61,7 +64,7 @@ Serverless college event registration and management system built with React + V
 | Amazon S3 | Hosts the frontend application files. |
 | Amazon API Gateway | Provides HTTP endpoints for frontend-to-backend communication. |
 | AWS Lambda | Executes backend logic for event and registration operations. |
-| Amazon DynamoDB | Stores event details and participant registrations. |
+| Amazon DynamoDB | Stores events, participant registrations, and organization applications. |
 | Amazon Cognito | Handles user authentication and supports access control. |
 | Amazon CloudWatch | Collects Lambda logs and helps monitor application errors. |
 
@@ -84,7 +87,7 @@ Serverless college event registration and management system built with React + V
                          |
                          v
                   Amazon DynamoDB
-             (Events and Registrations)
+             (Events, Registrations, OrganizationApplications)
 
         Amazon Cognito
         Authentication and Access Control
@@ -108,7 +111,7 @@ npm run dev      # http://localhost:5173
 ```
 Routes: `/` landing, `/events`, `/events/:id`, `/events/:id/register`
 (student sign-in required), `/confirmation/:id`, `/signup`,
-`/confirm-signup`, `/signin`, `/dashboard` (student hub), `/registrations`,
+`/org/signup`, `/org/apply`, `/confirm-signup`, `/signin`, `/dashboard` (student hub), `/registrations`,
 `/profile`, `/org/*` (organization role), `/admin/*` (admin role).
 
 Default local mode is mock data plus mock auth: seed events and demo accounts
@@ -140,9 +143,11 @@ live API transport with mocked HTTP; `npm run build` is the production check.
 7. The application displays the result, including a registration confirmation when successful.
 
 ## Status
-Phases 1–6 complete locally (foundation, frontend, API, DynamoDB storage,
-Cognito auth, frontend API integration). No AWS deployment yet; Phase 7
-deploys and runs the live auth checks. See `phases.md`.
+Phases 1–6 are implemented locally (foundation, frontend, API, DynamoDB
+storage, Cognito auth, and frontend API integration). The project owner reports
+that the existing AWS backend is deployed and Student login/registration have
+been tested; the current organization workflow requires a stack update and
+live acceptance checks. See `phases.md` and `docs/phases/PHASE-07-DEPLOYMENT.md`.
 
 Amazon Cognito supports authentication and protected operations, while CloudWatch provides backend execution logs for troubleshooting.
 

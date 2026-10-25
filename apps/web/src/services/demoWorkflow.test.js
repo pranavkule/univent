@@ -10,6 +10,11 @@ import {
   updateOrgEvent,
 } from './orgEvents.js'
 import { getPlatformSummary, listPlatformEvents } from './admin.js'
+import {
+  listOrganizations,
+  setOrganizationStatus,
+  submitOrganizationApplication,
+} from './organizations.js'
 
 const ORG_EMAIL = 'codecell@ves.ac.in'
 const ORG_NAME = 'CodeCell'
@@ -70,6 +75,22 @@ async function orgRow(eventId) {
 }
 
 describe('organization and admin demo workflow', () => {
+  it('keeps organization applications and admin decisions in mock storage only', async () => {
+    const application = await submitOrganizationApplication({
+      organizationName: 'Robotics Club',
+      officialEmail: 'new-robotics@ves.ac.in',
+      representativeName: 'Aarav Mehta',
+      representativeTitle: 'Secretary',
+      representativePhone: '+1 555 010 1234',
+    })
+    assert.equal(application.approvalStatus, 'pending')
+    assert.ok((await listOrganizations()).some((row) => row.contactEmail === 'new-robotics@ves.ac.in'))
+
+    await setOrganizationStatus(application, 'approved')
+    const updated = (await listOrganizations()).find((row) => row.contactEmail === 'new-robotics@ves.ac.in')
+    assert.equal(updated.approvalStatus, 'approved')
+  })
+
   it('keeps a saved draft out of the pending queue until it is submitted', async () => {
     const draft = await createOrgEvent(ORG_EMAIL, ORG_NAME, INPUT)
 

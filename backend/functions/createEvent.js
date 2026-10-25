@@ -8,6 +8,7 @@ const {
 const { validateEventInput, firstError } = require('./lib/validation')
 const { getStore } = require('./lib/store')
 const { publicEvent } = require('./lib/serializers')
+const { isApprovedOrganization } = require('./lib/organizationAccess')
 
 exports.handler = async (event) => {
   const method = requestMethod(event)
@@ -21,10 +22,6 @@ exports.handler = async (event) => {
   if (!isAdmin(principal) && !isOrg) {
     return error(403, 'Only administrators and organization accounts can create events.')
   }
-  if (isOrg && !principal.sub) {
-    return error(403, 'The organization account has no trusted user identifier.')
-  }
-
   const parsed = parseBody(event)
   if (!parsed.ok) return error(400, parsed.message)
 
@@ -32,10 +29,14 @@ exports.handler = async (event) => {
   if (Object.keys(errors).length > 0) return error(400, firstError(errors))
 
   try {
+    const store = getStore()
+    if (isOrg && !(await isApprovedOrganization(principal, store))) {
+      return error(403, 'An approved organization application is required to create events.')
+    }
     const eventValues = isOrg
       ? { ...values, organizer: principal.name || 'Organization' }
       : values
-    const created = await getStore().createEvent(eventValues, {
+    const created = await store.createEvent(eventValues, {
       ownerSub: isOrg ? principal.sub : null,
     })
     return json(201, publicEvent(created))

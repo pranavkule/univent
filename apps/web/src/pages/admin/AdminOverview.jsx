@@ -57,7 +57,7 @@ export default function AdminOverview() {
         Platform health at a glance.{' '}
         {API_MODE === 'mock'
           ? 'Mock data — stored in this browser only.'
-          : 'System events and registrations come from the live API; organization approvals remain browser-local demo data.'}
+          : 'Organization applications, system events, and registrations load through the live API; some reports and the user directory remain demo data.'}
       </p>
       <div className="org-stats" role="list" aria-label="Platform summary">
         {cards.map((c) => (

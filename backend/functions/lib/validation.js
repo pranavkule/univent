@@ -123,6 +123,60 @@ function validateRegistrationInput(body) {
   return { values: { eventId, name, email }, errors }
 }
 
+function validateOrganizationApplicationInput(body, principal, domain = 'ves.ac.in') {
+  const source = body || {}
+  const errors = {}
+  const allowed = new Set([
+    'organizationName',
+    'officialEmail',
+    'representativeName',
+    'representativeTitle',
+    'representativePhone',
+  ])
+  for (const key of Object.keys(source)) {
+    if (!allowed.has(key)) errors[key] = `${key} is not allowed.`
+  }
+
+  const organizationName = trimmed(source.organizationName)
+  const officialEmail = trimmed(source.officialEmail).toLowerCase()
+  const representativeName = trimmed(source.representativeName)
+  const representativeTitle = trimmed(source.representativeTitle)
+  const representativePhone = trimmed(source.representativePhone)
+  const claimedEmail = String(principal?.email || '').trim().toLowerCase()
+  const allowedDomain = String(domain || 'ves.ac.in').trim().toLowerCase()
+
+  if (organizationName.length < 2 || organizationName.length > 120) {
+    errors.organizationName = 'Organization name must be between 2 and 120 characters.'
+  }
+  if (!EMAIL_PATTERN.test(officialEmail)) {
+    errors.officialEmail = 'Enter a valid official college email address.'
+  } else if (officialEmail !== claimedEmail) {
+    errors.officialEmail = 'Official email must match the signed-in account.'
+  } else if (officialEmail.split('@')[1] !== allowedDomain) {
+    errors.officialEmail = `Use an @${allowedDomain} official email address.`
+  }
+  if (representativeName.length < 2 || representativeName.length > MAX_NAME) {
+    errors.representativeName = `Representative name must be between 2 and ${MAX_NAME} characters.`
+  }
+  if (representativeTitle.length < 2 || representativeTitle.length > 100) {
+    errors.representativeTitle = 'Representative role must be between 2 and 100 characters.'
+  }
+  if (!/^[+()\d .-]{7,32}$/.test(representativePhone)) {
+    errors.representativePhone = 'Enter a valid representative phone number.'
+  }
+
+  return {
+    values: {
+      organizationName,
+      officialEmail,
+      representativeName,
+      representativeTitle,
+      representativePhone,
+    },
+    errors,
+  }
+}
+
 function firstError(errors) {
   const keys = Object.keys(errors || {})
   return keys.length > 0 ? errors[keys[0]] : 'Invalid request.'
@@ -135,5 +189,6 @@ module.exports = {
   isValidTime,
   validateEventInput,
   validateRegistrationInput,
+  validateOrganizationApplicationInput,
   firstError,
 }

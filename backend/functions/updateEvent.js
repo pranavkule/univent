@@ -9,6 +9,7 @@ const { validateEventInput, firstError } = require('./lib/validation')
 const { getStore } = require('./lib/store')
 const { publicEvent } = require('./lib/serializers')
 const { CODES, StoreError } = require('./lib/storeError')
+const { isApprovedOrganization } = require('./lib/organizationAccess')
 
 const CLEARABLE_FIELDS = [
   'description',
@@ -30,10 +31,6 @@ exports.handler = async (event) => {
   const isOrg = isOrganization(principal)
   const admin = isAdmin(principal)
   if (!admin && !isOrg) return error(403, 'Only administrators and organization accounts can update events.')
-  if (isOrg && !principal.sub) {
-    return error(403, 'The organization account has no trusted user identifier.')
-  }
-
   const eventId = String(event.pathParameters?.eventId || '').trim()
   if (!eventId) return error(400, 'Event id is required.')
 
@@ -52,6 +49,9 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore()
+    if (isOrg && !(await isApprovedOrganization(principal, store))) {
+      return error(403, 'An approved organization application is required to update events.')
+    }
     const updated = await store.updateEvent(eventId, values, {
       ownerSub: isOrg ? principal.sub : null,
     })

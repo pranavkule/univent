@@ -64,6 +64,10 @@ function retryDelay(attempt, baseDelayMs) {
 function createDynamoStore(options = {}) {
   const eventsTable = options.eventsTable || process.env.EVENTS_TABLE
   const registrationsTable = options.registrationsTable || process.env.REGISTRATIONS_TABLE
+  const organizationApplicationsTable =
+    options.organizationApplicationsTable ||
+    process.env.ORGANIZATION_APPLICATIONS_TABLE ||
+    'OrganizationApplications'
   const ownerIndex = options.ownerIndex || process.env.REGISTRATIONS_OWNER_INDEX || OWNER_INDEX_DEFAULT
   const eventOwnerIndex =
     options.eventOwnerIndex || process.env.EVENTS_OWNER_INDEX || EVENT_OWNER_INDEX_DEFAULT
@@ -433,6 +437,102 @@ function createDynamoStore(options = {}) {
     throw new StoreError(CODES.REGISTRATION_CONFLICT)
   }
 
+  async function getOrganizationApplication(userSub) {
+    const result = await ddb.send(
+      new GetCommand({
+        TableName: organizationApplicationsTable,
+        Key: { userSub },
+        ConsistentRead: true,
+      }),
+    )
+    return result.Item || null
+  }
+
+  async function listOrganizationApplications() {
+    const items = await scanAll(() => ({
+      TableName: organizationApplicationsTable,
+      ConsistentRead: true,
+    }))
+    return items.sort((left, right) =>
+      String(left.appliedAt || '').localeCompare(String(right.appliedAt || '')),
+    )
+  }
+
+  async function createOrganizationApplication(values) {
+    const application = {
+      ...values,
+      status: 'PENDING',
+      appliedAt: new Date().toISOString(),
+    }
+    try {
+      await ddb.send(
+        new PutCommand({
+          TableName: organizationApplicationsTable,
+          Item: application,
+          ConditionExpression: 'attribute_not_exists(#userSub)',
+          ExpressionAttributeNames: { '#userSub': 'userSub' },
+        }),
+      )
+      return { ...application }
+    } catch (err) {
+      if (err && err.name === 'ConditionalCheckFailedException') {
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_EXISTS)
+      }
+      throw err
+    }
+  }
+
+  async function updateOrganizationApplicationStatus(
+    userSub,
+    { status, decisionReason = '', decidedBy = '' },
+    expectedStatuses,
+  ) {
+    const now = new Date().toISOString()
+    const names = {
+      '#userSub': 'userSub',
+      '#status': 'status',
+      '#decisionReason': 'decisionReason',
+      '#decidedAt': 'decidedAt',
+      '#decidedBy': 'decidedBy',
+      '#updatedAt': 'updatedAt',
+    }
+    const values = {
+      ':status': status,
+      ':decisionReason': status === 'REJECTED' ? decisionReason : '',
+      ':decidedAt': now,
+      ':decidedBy': decidedBy,
+      ':updatedAt': now,
+    }
+    const expected = expectedStatuses.map((expectedStatus, index) => {
+      const key = `:expected${index}`
+      values[key] = expectedStatus
+      return key
+    })
+    try {
+      const result = await ddb.send(
+        new UpdateCommand({
+          TableName: organizationApplicationsTable,
+          Key: { userSub },
+          UpdateExpression:
+            'SET #status = :status, #decisionReason = :decisionReason, #decidedAt = :decidedAt, #decidedBy = :decidedBy, #updatedAt = :updatedAt',
+          ConditionExpression:
+            `attribute_exists(#userSub) AND #status IN (${expected.join(', ')})`,
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+          ReturnValues: 'ALL_NEW',
+        }),
+      )
+      return result.Attributes || null
+    } catch (err) {
+      if (err && err.name === 'ConditionalCheckFailedException') {
+        const current = await getOrganizationApplication(userSub)
+        if (!current) return null
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+      }
+      throw err
+    }
+  }
+
   function reset() {
     throw new Error('DynamoDB storage cannot be reset in place; recreate tables or reseed explicitly.')
   }
@@ -447,6 +547,10 @@ function createDynamoStore(options = {}) {
     countRegistrations,
     findRegistration,
     createRegistration,
+    getOrganizationApplication,
+    listOrganizationApplications,
+    createOrganizationApplication,
+    updateOrganizationApplicationStatus,
     reset,
   }
 }
