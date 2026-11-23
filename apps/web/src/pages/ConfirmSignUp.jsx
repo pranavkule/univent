@@ -9,6 +9,7 @@ export default function ConfirmSignUp() {
   const location = useLocation()
   const email = location.state?.email || ''
   const from = location.state?.from || '/events'
+  const clientId = location.state?.clientId
   const [code, setCode] = useState('')
   const [errors, setErrors] = useState({})
   const [serverError, setServerError] = useState('')
@@ -25,7 +26,7 @@ export default function ConfirmSignUp() {
     setServerError('')
     setNotice('')
     try {
-      await confirmSignUp({ email, code })
+      await confirmSignUp({ email, code, clientId })
       navigate('/signin', {
         replace: true,
         state: {
@@ -46,7 +47,7 @@ export default function ConfirmSignUp() {
     setServerError('')
     setNotice('')
     try {
-      await resendConfirmationCode({ email })
+      await resendConfirmationCode({ email, clientId })
       setNotice('A new confirmation code was sent to your email.')
     } catch (err) {
       setServerError(err.message || 'Could not resend the code.')

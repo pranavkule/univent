@@ -4,8 +4,14 @@ export const ROLES = {
   ADMIN: 'admin',
 }
 
+export const ACCOUNT_TYPES = {
+  STUDENT: 'STUDENT',
+  ORGANIZATION_APPLICANT: 'ORGANIZATION_APPLICANT',
+}
+
 const ADMIN_GROUP = 'admins'
 const ORGANIZATION_GROUP = 'organizations'
+const ACCOUNT_TYPE_VALUES = new Set(Object.values(ACCOUNT_TYPES))
 
 function asArray(value) {
   if (Array.isArray(value)) return value
@@ -18,6 +24,11 @@ export function roleFromGroups(groups) {
   if (list.includes(ADMIN_GROUP)) return ROLES.ADMIN
   if (list.includes(ORGANIZATION_GROUP)) return ROLES.ORGANIZATION
   return ROLES.STUDENT
+}
+
+export function accountTypeFromClaims(claims) {
+  const accountType = claims?.['custom:account_type']
+  return ACCOUNT_TYPE_VALUES.has(accountType) ? accountType : null
 }
 
 export function getDashboardPathForRole(role) {

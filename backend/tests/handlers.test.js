@@ -14,6 +14,7 @@ const register = require('../functions/register')
 const getRegistrations = require('../functions/getRegistrations')
 const organizationApplications = require('../functions/organizationApplications')
 const cognitoGroups = require('../functions/lib/cognitoGroups')
+const cognitoAccountType = require('../functions/lib/cognitoAccountType')
 const { CODES, StoreError } = require('../functions/lib/storeError')
 
 const ADMIN = devHeaders('admin', 'admin@univent.demo', 'Demo Admin')
@@ -65,6 +66,16 @@ async function withCognitoGroupMocks(replacements, action) {
     return await action()
   } finally {
     Object.assign(cognitoGroups, original)
+  }
+}
+
+async function withCognitoAccountTypeMock(accountType, action) {
+  const original = cognitoAccountType.getAccountType
+  cognitoAccountType.getAccountType = async () => accountType
+  try {
+    return await action()
+  } finally {
+    cognitoAccountType.getAccountType = original
   }
 }
 
@@ -306,13 +317,17 @@ describe('organization application workflow', () => {
     name: 'Aarav Mehta',
   })
 
-  async function submitApplication(authorizer = applicant, body = validApplication) {
-    return invoke(organizationApplications.handler, {
+  async function submitApplication(
+    authorizer = applicant,
+    body = validApplication,
+    accountType = cognitoAccountType.ACCOUNT_TYPES.ORGANIZATION_APPLICANT,
+  ) {
+    return withCognitoAccountTypeMock(accountType, () => invoke(organizationApplications.handler, {
       method: 'POST',
       path: '/organization-applications',
       authorizer,
       body,
-    })
+    }))
   }
 
   async function decide(userSub, status, decisionReason = '') {
@@ -367,11 +382,62 @@ describe('organization application workflow', () => {
     assert.equal(devIdentity.statusCode, 401)
   })
 
+  it('rejects a normal student even when they call the application API directly', async () => {
+    const student = cognitoAuthorizer({
+      sub: 'student-sub',
+      email: 'student@ves.ac.in',
+    })
+    const result = await submitApplication(
+      student,
+      validApplication,
+      cognitoAccountType.ACCOUNT_TYPES.STUDENT,
+    )
+
+    assert.equal(result.statusCode, 403)
+    assert.match(result.json.message, /organization applicant accounts/i)
+    assert.equal(getStore().getOrganizationApplication('student-sub'), null)
+  })
+
+  it('fails closed with an explicit service error when Cognito account type cannot be read', async () => {
+    const original = cognitoAccountType.getAccountType
+    cognitoAccountType.getAccountType = async () => { throw new Error('Cognito unavailable') }
+    try {
+      const result = await invoke(organizationApplications.handler, {
+        method: 'POST',
+        path: '/organization-applications',
+        authorizer: applicant,
+        body: validApplication,
+      })
+      assert.equal(result.statusCode, 503)
+      assert.match(result.json.message, /verify organization signup eligibility/i)
+    } finally {
+      cognitoAccountType.getAccountType = original
+    }
+  })
+
   it('prevents duplicate applications for the same Cognito account', async () => {
     assert.equal((await submitApplication()).statusCode, 201)
     const duplicate = await submitApplication()
     assert.equal(duplicate.statusCode, 409)
     assert.match(duplicate.json.message, /already exists/i)
+  })
+
+  it('allows rejected applicants to reapply while retaining the rejection decision', async () => {
+    await submitApplication()
+    await withCognitoGroupMocks({
+      removeOrganizationGroup: async () => {},
+    }, () => decide('applicant-sub', 'REJECTED', 'Please add the organization details.'))
+
+    const reapplied = await submitApplication(applicant, {
+      ...validApplication,
+      organizationName: 'Robotics Club Reapplied',
+    })
+
+    assert.equal(reapplied.statusCode, 200)
+    assert.equal(reapplied.json.application.status, 'PENDING')
+    const stored = getStore().getOrganizationApplication('applicant-sub')
+    assert.equal(stored.organizationName, 'Robotics Club Reapplied')
+    assert.equal(stored.previousDecisions[0].decisionReason, 'Please add the organization details.')
   })
 
   it('lets applicants read only their own application and admins list applications', async () => {

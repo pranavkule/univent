@@ -166,6 +166,7 @@ hosting choices are settled.
    VITE_COGNITO_REGION=<CognitoRegion-output>
    VITE_COGNITO_USER_POOL_ID=<UserPoolId-output>
    VITE_COGNITO_CLIENT_ID=<UserPoolClientId-output>
+   VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID=<OrganizationApplicantUserPoolClientId-output>
    ```
 
    ```powershell

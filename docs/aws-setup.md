@@ -49,7 +49,8 @@ permissions.
    - The Events table's `OrganizationOwnerIndex` is sparse. Creating this GSI
      does not rewrite seeded events; only events created after the change have
      the trusted `ownerSub` field and appear in organization listings.
-   - Deploy-time outputs: `UserPoolId`, `UserPoolClientId`, `CognitoRegion`,
+   - Deploy-time outputs: `UserPoolId`, `UserPoolClientId`,
+     `OrganizationApplicantUserPoolClientId`, `CognitoRegion`,
      `OrganizationApplicationsTableName`, and the existing event/registration
      table outputs.
 4. **Deploy (Phase 7)** — follow the PowerShell preflight, deployment gates,
@@ -65,7 +66,8 @@ For local/mock use, copy `apps/web/.env.example` to
 deployed API and Cognito outputs in `apps/web/.env.production.local` as
 described in the Phase 7 deployment guide. The production configuration must
 set `VITE_API_MODE=live`, `VITE_AUTH_MODE=cognito`, `VITE_API_URL`, and the
-Cognito region, user pool ID, and client ID.
+Cognito region, user pool ID, student client ID, and organization-applicant
+client ID.
 
 ```dotenv
 VITE_AUTH_MODE=mock
@@ -75,10 +77,14 @@ VITE_DEV_AUTH=false
 VITE_COGNITO_REGION=ap-south-1
 VITE_COGNITO_USER_POOL_ID=
 VITE_COGNITO_CLIENT_ID=
+VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID=
 ```
 
 - Mock mode keeps the local demo accounts and needs no AWS.
 - Cognito mode fails closed if the pool ID, client ID, or region is missing.
+- Organization signup also requires
+  `VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID` from the
+  `OrganizationApplicantUserPoolClientId` stack output.
 - Set `VITE_DEV_AUTH=true` only when the frontend talks to
   `scripts/dev-api.js`; deployed Lambda ignores dev identity headers.
 

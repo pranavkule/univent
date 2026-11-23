@@ -381,6 +381,34 @@ describe('DynamoDB store', () => {
     )
   })
 
+  it('resubmits rejected applications conditionally and preserves the prior decision', async () => {
+    const previous = {
+      userSub: 'cognito-sub',
+      status: 'REJECTED',
+      decisionReason: 'Add a representative phone number.',
+      decidedAt: '2026-10-25T10:00:00.000Z',
+      decidedBy: 'admin-sub',
+    }
+    const fake = new FakeClient(() => ({
+      Attributes: { userSub: 'cognito-sub', status: 'PENDING' },
+    }))
+    const store = makeStore(fake)
+
+    await store.reapplyOrganizationApplication('cognito-sub', {
+      organizationName: 'Robotics Club',
+      officialEmail: 'robotics@ves.ac.in',
+      representativeName: 'Aarav Mehta',
+      representativeTitle: 'Secretary',
+      representativePhone: '+1 555 010 1234',
+    }, previous)
+
+    const update = fake.calls[0].input
+    assert.match(update.ConditionExpression, /#status = :rejected/)
+    assert.match(update.UpdateExpression, /list_append\(if_not_exists/)
+    assert.equal(update.ExpressionAttributeValues[':previousDecision'][0].decisionReason, previous.decisionReason)
+    assert.match(update.UpdateExpression, /REMOVE #decisionReason/)
+  })
+
   it('reads organization applications consistently and conditionally updates status', async () => {
     const fake = new FakeClient((command) => {
       if (command.constructor.name === 'GetCommand') {

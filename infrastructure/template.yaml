@@ -40,6 +40,13 @@ Resources:
         - email
       UsernameConfiguration:
         CaseSensitive: false
+      Schema:
+        - Name: account_type
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '32'
       AutoVerifiedAttributes:
         - email
       MfaConfiguration: 'OFF'
@@ -55,6 +62,7 @@ Resources:
         UnusedAccountValidityDays: 7
       LambdaConfig:
         PreSignUp: !GetAtt PreSignUpFunction.Arn
+        PostConfirmation: !GetAtt PostConfirmationFunction.Arn
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -67,6 +75,43 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
       SupportedIdentityProviders:
         - COGNITO
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - custom:account_type
+      WriteAttributes:
+        - email
+        - name
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  OrganizationApplicantUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AWS::StackName}-organization-applicant'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - custom:account_type
+      WriteAttributes:
+        - email
+        - name
       PreventUserExistenceErrors: ENABLED
       EnableTokenRevocation: true
       AccessTokenValidity: 60
@@ -171,6 +216,30 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  PostConfirmationRole:
+    Type: AWS::IAM::Role
+    Condition: CreateExecutionRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ClassifyConfirmedUser
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:ListUserPoolClients
+                  - cognito-idp:AdminUpdateUserAttributes
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
 
   GetEventsRole:
     Type: AWS::IAM::Role
@@ -365,6 +434,7 @@ Resources:
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
               - Effect: Allow
                 Action:
+                  - cognito-idp:AdminGetUser
                   - cognito-idp:AdminAddUserToGroup
                   - cognito-idp:AdminRemoveUserFromGroup
                 Resource: !GetAtt UserPool.Arn
@@ -415,6 +485,26 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref PreSignUpFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  PostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Assign a persistent account type after Cognito email confirmation
+      CodeUri: ../backend/functions/
+      Handler: postConfirmation.handler
+      Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt PostConfirmationRole.Arn]
+      Environment:
+        Variables:
+          STUDENT_CLIENT_NAME: !Sub '${AWS::StackName}-web'
+          ORGANIZATION_APPLICANT_CLIENT_NAME: !Sub '${AWS::StackName}-organization-applicant'
+
+  PostConfirmationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PostConfirmationFunction
       Principal: cognito-idp.amazonaws.com
       SourceArn: !GetAtt UserPool.Arn
 
@@ -611,6 +701,9 @@ Outputs:
   UserPoolClientId:
     Description: Cognito app client ID for the React application
     Value: !Ref UserPoolClient
+  OrganizationApplicantUserPoolClientId:
+    Description: Cognito app client ID used only by organization applicant signup
+    Value: !Ref OrganizationApplicantUserPoolClient
   CognitoRegion:
     Description: AWS region containing the Cognito User Pool
     Value: !Ref AWS::Region

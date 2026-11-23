@@ -482,6 +482,68 @@ function createDynamoStore(options = {}) {
     }
   }
 
+  async function reapplyOrganizationApplication(userSub, values, rejectedApplication) {
+    const now = new Date().toISOString()
+    const previous = rejectedApplication || await getOrganizationApplication(userSub)
+    if (!previous) return null
+    if (previous.status !== 'REJECTED') {
+      throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+    }
+    const names = {
+      '#userSub': 'userSub',
+      '#organizationName': 'organizationName',
+      '#officialEmail': 'officialEmail',
+      '#representativeName': 'representativeName',
+      '#representativeTitle': 'representativeTitle',
+      '#representativePhone': 'representativePhone',
+      '#status': 'status',
+      '#appliedAt': 'appliedAt',
+      '#decisionReason': 'decisionReason',
+      '#decidedAt': 'decidedAt',
+      '#decidedBy': 'decidedBy',
+      '#previousDecisions': 'previousDecisions',
+    }
+    const valuesByName = {
+      ':organizationName': values.organizationName,
+      ':officialEmail': values.officialEmail,
+      ':representativeName': values.representativeName,
+      ':representativeTitle': values.representativeTitle,
+      ':representativePhone': values.representativePhone,
+      ':pending': 'PENDING',
+      ':rejected': 'REJECTED',
+      ':appliedAt': now,
+      ':empty': [],
+      ':previousDecision': [{
+        status: previous.status,
+        decisionReason: previous.decisionReason || '',
+        decidedAt: previous.decidedAt || '',
+        decidedBy: previous.decidedBy || '',
+      }],
+    }
+    try {
+      const result = await ddb.send(
+        new UpdateCommand({
+          TableName: organizationApplicationsTable,
+          Key: { userSub },
+          UpdateExpression:
+            'SET #organizationName = :organizationName, #officialEmail = :officialEmail, #representativeName = :representativeName, #representativeTitle = :representativeTitle, #representativePhone = :representativePhone, #status = :pending, #appliedAt = :appliedAt, #previousDecisions = list_append(if_not_exists(#previousDecisions, :empty), :previousDecision) REMOVE #decisionReason, #decidedAt, #decidedBy',
+          ConditionExpression: 'attribute_exists(#userSub) AND #status = :rejected',
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: valuesByName,
+          ReturnValues: 'ALL_NEW',
+        }),
+      )
+      return result.Attributes || null
+    } catch (err) {
+      if (err && err.name === 'ConditionalCheckFailedException') {
+        const current = await getOrganizationApplication(userSub)
+        if (!current) return null
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+      }
+      throw err
+    }
+  }
+
   async function updateOrganizationApplicationStatus(
     userSub,
     { status, decisionReason = '', decidedBy = '' },
@@ -550,6 +612,7 @@ function createDynamoStore(options = {}) {
     getOrganizationApplication,
     listOrganizationApplications,
     createOrganizationApplication,
+    reapplyOrganizationApplication,
     updateOrganizationApplicationStatus,
     reset,
   }

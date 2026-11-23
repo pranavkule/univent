@@ -161,6 +161,34 @@ function createOrganizationApplication(values) {
   return { ...application }
 }
 
+function reapplyOrganizationApplication(userSub, values, rejectedApplication) {
+  const application = organizationApplications.get(userSub) || rejectedApplication
+  if (!application) return null
+  if (application.status !== 'REJECTED') {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+  }
+  const updated = {
+    ...application,
+    ...values,
+    status: 'PENDING',
+    appliedAt: new Date().toISOString(),
+    previousDecisions: [
+      ...(application.previousDecisions || []),
+      {
+        status: application.status,
+        decisionReason: application.decisionReason || '',
+        decidedAt: application.decidedAt || '',
+        decidedBy: application.decidedBy || '',
+      },
+    ],
+    decisionReason: '',
+    decidedAt: '',
+    decidedBy: '',
+  }
+  organizationApplications.set(userSub, updated)
+  return { ...updated }
+}
+
 function updateOrganizationApplicationStatus(
   userSub,
   { status, decisionReason = '', decidedBy = '' },
@@ -197,6 +225,7 @@ function createMemoryStore() {
     getOrganizationApplication,
     listOrganizationApplications,
     createOrganizationApplication,
+    reapplyOrganizationApplication,
     updateOrganizationApplicationStatus,
     reset: seed,
   }

@@ -7,7 +7,12 @@ import {
   validateSignInInput,
   validateSignUpInput,
 } from './authValidation.js'
-import { getDashboardPathForRole, roleFromGroups } from './authRoles.js'
+import {
+  ACCOUNT_TYPES,
+  accountTypeFromClaims,
+  getDashboardPathForRole,
+  roleFromGroups,
+} from './authRoles.js'
 
 describe('student auth validation', () => {
   it('accepts ves.ac.in student addresses', () => {
@@ -74,6 +79,19 @@ describe('Cognito role mapping', () => {
     assert.equal(getDashboardPathForRole('student'), '/dashboard')
     assert.equal(getDashboardPathForRole('organization'), '/org')
     assert.equal(getDashboardPathForRole('admin'), '/admin')
+  })
+
+  it('reads only recognized persisted account types from Cognito claims', () => {
+    assert.equal(
+      accountTypeFromClaims({ 'custom:account_type': 'ORGANIZATION_APPLICANT' }),
+      ACCOUNT_TYPES.ORGANIZATION_APPLICANT,
+    )
+    assert.equal(
+      accountTypeFromClaims({ 'custom:account_type': 'STUDENT' }),
+      ACCOUNT_TYPES.STUDENT,
+    )
+    assert.equal(accountTypeFromClaims({ 'custom:account_type': 'ADMIN' }), null)
+    assert.equal(accountTypeFromClaims({}), null)
   })
 
   it('sends unknown roles to the public events list instead of looping', () => {

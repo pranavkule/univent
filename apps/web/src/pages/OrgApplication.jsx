@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import OrgStatusBadge from '../components/OrgStatusBadge.jsx'
 import { useAuth } from '../components/AuthProvider.jsx'
+import { ACCOUNT_TYPES } from '../services/authRoles.js'
 import { API_MODE } from '../services/api.js'
 import {
   getMyOrganizationApplication,
@@ -26,8 +27,9 @@ function validate(values) {
 }
 
 export default function OrgApplication() {
-  const { user } = useAuth()
+  const { user, updateOrganizationApplication } = useAuth()
   const [application, setApplication] = useState(null)
+  const [reapplying, setReapplying] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [submitError, setSubmitError] = useState('')
@@ -44,7 +46,19 @@ export default function OrgApplication() {
     let cancelled = false
     getMyOrganizationApplication(user?.email || '')
       .then((result) => {
-        if (!cancelled) setApplication(result)
+        if (!cancelled) {
+          setApplication(result)
+          updateOrganizationApplication(result)
+          if (result) {
+            setValues((current) => ({
+              ...current,
+              organizationName: result.organizationName || result.name || current.organizationName,
+              representativeName: result.representativeName || result.contactName || current.representativeName,
+              representativeTitle: result.representativeTitle || current.representativeTitle,
+              representativePhone: result.representativePhone || current.representativePhone,
+            }))
+          }
+        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message || 'Could not load your application.')
@@ -55,7 +69,7 @@ export default function OrgApplication() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, updateOrganizationApplication])
 
   function handleChange(event) {
     const { name, value } = event.target
@@ -75,6 +89,8 @@ export default function OrgApplication() {
         officialEmail: user.email,
       })
       setApplication(result)
+      setReapplying(false)
+      updateOrganizationApplication(result)
     } catch (err) {
       setSubmitError(err.message || 'Could not submit your application.')
     } finally {
@@ -85,7 +101,11 @@ export default function OrgApplication() {
   if (!loaded) return <div className="container"><div className="skeleton">Loading application…</div></div>
   if (loadError) return <div className="container"><div className="alert alert-error" role="alert">{loadError}</div></div>
 
-  if (application) {
+  if (application && !(
+    reapplying
+    && application.approvalStatus === 'rejected'
+    && user?.accountType === ACCOUNT_TYPES.ORGANIZATION_APPLICANT
+  )) {
     const status = application.approvalStatus || 'pending'
     const approved = status === 'approved'
     return (
@@ -105,8 +125,24 @@ export default function OrgApplication() {
           </p>
           {application.decisionReason && <p className="muted">Decision: {application.decisionReason}</p>}
           {approved && <Link className="btn" to="/org">Open organization workspace</Link>}
+          {status === 'rejected' && user?.accountType === ACCOUNT_TYPES.ORGANIZATION_APPLICANT && (
+            <button type="button" className="btn" onClick={() => setReapplying(true)}>
+              Reapply
+            </button>
+          )}
         </div>
         {API_MODE === 'mock' && <p className="muted">Mock application status is stored in this browser only.</p>}
+      </div>
+    )
+  }
+
+  if (!application && user?.accountType !== ACCOUNT_TYPES.ORGANIZATION_APPLICANT) {
+    return (
+      <div className="container container-narrow">
+        <h2>Organization application</h2>
+        <div className="alert alert-error" role="alert">
+          Only accounts created through Organization Signup can submit an organization application.
+        </div>
       </div>
     )
   }

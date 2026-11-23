@@ -31,7 +31,7 @@ export default function SignUp() {
       if (result.needsConfirmation) {
         navigate('/confirm-signup', {
           replace: true,
-          state: { email: result.email, name: result.name, from },
+          state: { email: result.email, name: result.name, from, clientId: result.clientId },
         })
         return
       }

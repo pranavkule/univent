@@ -176,7 +176,7 @@ export default function Landing() {
           <span className="orb orb-b" />
           <span className="grid-overlay" />
         </div>
-        <div className="container hero-grid">
+        <div className="landing-shell hero-grid">
           <div className="hero-copy">
             <p className="eyebrow eyebrow-glow">
               <span className="eyebrow-dot" aria-hidden="true" />
@@ -222,7 +222,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <div className="container landing-sections">
+      <div className="landing-shell landing-sections">
         <section aria-labelledby="featured-heading" className="landing-block">
           <div className="block-head">
             <div>

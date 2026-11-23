@@ -10,8 +10,13 @@ API enforces the approved role matrix.
 - Email is the only auto-verified attribute; MFA is off for this project.
 - Password policy: at least 8 characters with uppercase, lowercase, and a
   number. Symbols are optional to match the Cognito template policy.
-- `AWS::Cognito::UserPoolClient`: public client (no secret), SRP and refresh
-  flows, no hosted UI. Access/ID tokens last 60 minutes; refresh token 7 days.
+- Student and organization-applicant `AWS::Cognito::UserPoolClient`s: public
+  clients (no secret), SRP and refresh flows, no hosted UI. The applicant
+  client is used only by `/org/signup`. Access/ID tokens last 60 minutes;
+  refresh token 7 days.
+- The mutable `custom:account_type` attribute is readable by app clients but
+  not writable by users. `PostConfirmation` assigns `STUDENT` or
+  `ORGANIZATION_APPLICANT` based on Cognito's trusted signup client context.
 - Groups: `admins` and `organizations`. No privileged group means `student`.
 - `preSignUp.js` is wired as the PreSignUp trigger:
   - allows public student and organization-representative self sign-up only
@@ -30,7 +35,8 @@ API enforces the approved role matrix.
 - `GET /events` remains public.
 - Gateway `401`/`403` responses include CORS headers so the browser can read
   auth failures.
-- Stack outputs: `UserPoolId`, `UserPoolClientId`, `CognitoRegion`.
+- Stack outputs: `UserPoolId`, `UserPoolClientId`,
+  `OrganizationApplicantUserPoolClientId`, `CognitoRegion`.
 
 ### Backend authorization
 | Action | Student | Organization | Admin |
@@ -41,7 +47,7 @@ API enforces the approved role matrix.
 | `POST /events` | `403` | Approved application + group only | Yes |
 | `GET /organization/events` | `403` | Approved application + group; own only | All events |
 | `PUT /events/{eventId}` | `403` | Approved application + group; own event only | Any event |
-| Application submission | Verified email required | Own verified account | `403` |
+| Application submission | `403` unless persisted account type is `ORGANIZATION_APPLICANT` | Own verified account | `403` |
 | Application list/decision | Own application only | Own application only | All / decide |
 
 Identity comes from trusted authorizer claims, never body fields. The Lambda
@@ -51,10 +57,15 @@ also gates workspaces. Organization event ownership is the trusted Cognito
 Phase 4 transactions, counters, and owner-scoped queries are unchanged.
 
 ### Organization application and approval workflow
-- `/org/signup` creates a normal Cognito account with representative name,
-  official college email, and password. The user confirms the email and signs
-  in before submitting organization name, representative role, and phone at
-  `/org/apply`.
+- `/signup` creates a `STUDENT` account; `/org/signup` uses the separate
+  applicant app client and creates an `ORGANIZATION_APPLICANT` account after
+  email confirmation. The user must sign in before submitting organization
+  name, representative role, and phone at `/org/apply`.
+- The PostConfirmation Lambda assigns the account type server-side; app
+  clients cannot write the custom attribute. `POST
+  /organization-applications` reads the persisted Cognito attribute and
+  rejects non-applicants with HTTP 403. The account type does not grant
+  organization privileges.
 - `POST /organization-applications` requires the Cognito email to be verified
   and match the submitted official email, and checks the configured exact
   college domain. The handler takes `userSub` only from the authorizer claim.
@@ -72,12 +83,19 @@ Phase 4 transactions, counters, and owner-scoped queries are unchanged.
 - Existing group-only organization users have no approval record and cannot
   use organization APIs. They must submit an application and be approved;
   no bulk data migration or group-only bypass is provided.
+- Existing Cognito accounts are not automatically classified. Only accounts
+  confirmed through a recognized app client after deployment receive the
+  corresponding account type. Backfill an existing account only after its
+  original signup route is reliably verified; approved organizations retain
+  access through their existing group and approval record.
 
 ### Frontend
 - `VITE_AUTH_MODE=mock` preserves the browser-local demo accounts.
 - `VITE_AUTH_MODE=cognito` uses `amazon-cognito-identity-js`; production
   defaults to Cognito and fails closed when pool/client/region config is
   missing.
+- Configure `VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID` from the
+  `OrganizationApplicantUserPoolClientId` stack output for `/org/signup`.
 - Sign-up validates `@ves.ac.in` before calling Cognito, then routes to
   `/confirm-signup` when a code is required.
 - `/confirm-signup` enters/resends the email code and then sends the user to
@@ -122,6 +140,10 @@ node scripts/provision-cognito-user.js \
 - `npm --prefix apps/web run build`
 - `sam validate --lint --template-file infrastructure/template.yaml`
 - `sam build --template-file infrastructure/template.yaml --build-dir <short-path>`
+- When deploying with a supplied Lambda role, grant it
+  `cognito-idp:ListUserPoolClients` and
+  `cognito-idp:AdminUpdateUserAttributes` for PostConfirmation, plus
+  `cognito-idp:AdminGetUser` for organization-application authorization.
 
 ## Deployment-dependent checks
 These need a real Cognito pool and API Gateway stage:

@@ -28,6 +28,13 @@ export function signUp(input) {
   return auth.signUp(input)
 }
 
+export function signUpOrganizationApplicant(input) {
+  if (AUTH_MODE !== 'cognito') {
+    throw new Error('Organization signup requires Cognito authentication.')
+  }
+  return cognitoAuth.signUpOrganizationApplicant(input)
+}
+
 export function confirmSignUp(input) {
   return auth.confirmSignUp(input)
 }

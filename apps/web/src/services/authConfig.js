@@ -19,6 +19,9 @@ export const COGNITO = {
   region: String(env.VITE_COGNITO_REGION || '').trim(),
   userPoolId: String(env.VITE_COGNITO_USER_POOL_ID || '').trim(),
   clientId: String(env.VITE_COGNITO_CLIENT_ID || '').trim(),
+  organizationApplicantClientId: String(
+    env.VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID || '',
+  ).trim(),
 }
 
 export function assertCognitoConfig() {

@@ -6,23 +6,30 @@ import {
 } from 'amazon-cognito-identity-js'
 
 import { COGNITO, assertCognitoConfig } from './authConfig.js'
-import { roleFromGroups } from './authRoles.js'
+import { accountTypeFromClaims, roleFromGroups } from './authRoles.js'
 
-let pool = null
+const pools = new Map()
 
-function getPool() {
+function getPool(clientId = COGNITO.clientId) {
   assertCognitoConfig()
-  if (!pool) {
-    pool = new CognitoUserPool({
-      UserPoolId: COGNITO.userPoolId,
-      ClientId: COGNITO.clientId,
-    })
+  if (!clientId) throw new Error('A Cognito app client is required for this authentication action.')
+  if (clientId !== COGNITO.clientId && clientId !== COGNITO.organizationApplicantClientId) {
+    throw new Error('The Cognito app client is not configured for this authentication action.')
   }
-  return pool
+  if (!pools.has(clientId)) {
+    pools.set(clientId, new CognitoUserPool({
+      UserPoolId: COGNITO.userPoolId,
+      ClientId: clientId,
+    }))
+  }
+  return pools.get(clientId)
 }
 
-function cognitoUser(email) {
-  return new CognitoUser({ Username: String(email || '').trim().toLowerCase(), Pool: getPool() })
+function cognitoUser(email, clientId) {
+  return new CognitoUser({
+    Username: String(email || '').trim().toLowerCase(),
+    Pool: getPool(clientId),
+  })
 }
 
 function publicUserFromClaims(claims) {
@@ -32,6 +39,7 @@ function publicUserFromClaims(claims) {
     name,
     email,
     role: roleFromGroups(claims['cognito:groups']),
+    accountType: accountTypeFromClaims(claims),
     groups: claims['cognito:groups'] || [],
   }
 }
@@ -92,7 +100,7 @@ function mapError(err, action = 'signin') {
   return new Error((err && err.message) || 'Authentication failed. Try again.')
 }
 
-export async function signUp({ name, email, password }) {
+async function signUpWithClient({ name, email, password }, clientId) {
   const cleanEmail = String(email || '').trim().toLowerCase()
   const cleanName = String(name || '').trim()
   const attributes = [
@@ -101,7 +109,7 @@ export async function signUp({ name, email, password }) {
   ]
 
   return new Promise((resolve, reject) => {
-    getPool().signUp(cleanEmail, password, attributes, null, (err, result) => {
+    getPool(clientId).signUp(cleanEmail, password, attributes, null, (err, result) => {
       if (err) {
         reject(mapError(err))
         return
@@ -110,13 +118,25 @@ export async function signUp({ name, email, password }) {
         needsConfirmation: result.userConfirmed === false,
         email: result.user.getUsername(),
         name: cleanName,
+        clientId,
       })
     })
   })
 }
 
-export async function confirmSignUp({ email, code }) {
-  const user = cognitoUser(email)
+export function signUp(input) {
+  return signUpWithClient(input, COGNITO.clientId)
+}
+
+export function signUpOrganizationApplicant(input) {
+  if (!COGNITO.organizationApplicantClientId) {
+    throw new Error('Cognito organization signup is not configured. Set VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID.')
+  }
+  return signUpWithClient(input, COGNITO.organizationApplicantClientId)
+}
+
+export async function confirmSignUp({ email, code, clientId }) {
+  const user = cognitoUser(email, clientId || COGNITO.clientId)
   return new Promise((resolve, reject) => {
     user.confirmRegistration(String(code || '').trim(), true, (err, result) => {
       if (err) {
@@ -128,8 +148,8 @@ export async function confirmSignUp({ email, code }) {
   })
 }
 
-export async function resendConfirmationCode({ email }) {
-  const user = cognitoUser(email)
+export async function resendConfirmationCode({ email, clientId }) {
+  const user = cognitoUser(email, clientId || COGNITO.clientId)
   return new Promise((resolve, reject) => {
     user.resendConfirmationCode((err, result) => {
       if (err) {

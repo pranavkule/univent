@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthProvider.jsx'
 import { validateSignUpInput } from '../services/auth.js'
 
 export default function OrgSignUp() {
-  const { signUp, authMode } = useAuth()
+  const { signUpOrganizationApplicant, authMode } = useAuth()
   const navigate = useNavigate()
   const [values, setValues] = useState({ name: '', email: '', password: '' })
   const [errors, setErrors] = useState({})
@@ -24,13 +24,18 @@ export default function OrgSignUp() {
     setSubmitting(true)
     setServerError('')
     try {
-      const result = await signUp(values)
+      const result = await signUpOrganizationApplicant(values)
       if (result.user) {
         navigate('/org/apply', { replace: true })
       } else if (result.needsConfirmation) {
         navigate('/confirm-signup', {
           replace: true,
-          state: { email: result.email, name: result.name, from: '/org/apply' },
+          state: {
+            email: result.email,
+            name: result.name,
+            from: '/org/apply',
+            clientId: result.clientId,
+          },
         })
       } else {
         navigate('/signin', {

@@ -136,9 +136,15 @@ VITE_DEV_AUTH=false
 VITE_COGNITO_REGION=us-east-1
 VITE_COGNITO_USER_POOL_ID=us-east-1_KGPCzB46L
 VITE_COGNITO_CLIENT_ID=215vq2fi0hif59jpn4700mb6ar
+VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID=<OrganizationApplicantUserPoolClientId-output>
 ```
 
 These settings point the frontend to the configured UniVent AWS backend and Cognito user pool.
+
+The organization signup client ID is a separate public Cognito app client
+created by the SAM stack. Set it from the
+`OrganizationApplicantUserPoolClientId` output; organization signup will fail
+closed if it is not configured.
 
 The values above identify the frontend's API and authentication configuration. They are not AWS access keys. Never put AWS secret keys, session tokens, or other private credentials in frontend environment variables.
 

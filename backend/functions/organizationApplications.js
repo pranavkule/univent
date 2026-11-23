@@ -4,6 +4,7 @@ const { getStore } = require('./lib/store')
 const { CODES, StoreError } = require('./lib/storeError')
 const { validateOrganizationApplicationInput, firstError } = require('./lib/validation')
 const cognitoGroups = require('./lib/cognitoGroups')
+const cognitoAccountType = require('./lib/cognitoAccountType')
 
 const STATUS_TRANSITIONS = {
   APPROVED: ['PENDING', 'REJECTED', 'SUSPENDED'],
@@ -53,6 +54,16 @@ async function submitApplication(event, principal, store) {
   if (!principal.emailVerified) {
     return error(403, 'Confirm the account email before applying.')
   }
+  let accountType
+  try {
+    accountType = await cognitoAccountType.getAccountType(principal)
+  } catch (err) {
+    console.error('organization applicant account type lookup failed:', err && err.message)
+    return error(503, 'Unable to verify organization signup eligibility right now.')
+  }
+  if (accountType !== cognitoAccountType.ACCOUNT_TYPES.ORGANIZATION_APPLICANT) {
+    return error(403, 'Only organization applicant accounts can submit organization applications.')
+  }
 
   const parsed = parseBody(event)
   if (!parsed.ok) return error(400, parsed.message)
@@ -64,11 +75,15 @@ async function submitApplication(event, principal, store) {
   if (Object.keys(errors).length > 0) return error(400, firstError(errors))
 
   try {
-    const application = await store.createOrganizationApplication({
-      userSub: principal.sub,
-      ...values,
-    })
-    return json(201, { application: publicApplication(application, false) })
+    const current = await store.getOrganizationApplication(principal.sub)
+    if (current && current.status !== 'REJECTED') {
+      return error(409, 'An organization application already exists for this account.')
+    }
+    const application = current
+      ? await store.reapplyOrganizationApplication(principal.sub, values, current)
+      : await store.createOrganizationApplication({ userSub: principal.sub, ...values })
+    if (!application) return error(409, 'The organization application changed before this request completed.')
+    return json(current ? 200 : 201, { application: publicApplication(application, false) })
   } catch (err) {
     const mapped = statusError(err)
     if (mapped) return mapped

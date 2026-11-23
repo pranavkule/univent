@@ -1,25 +1,74 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthProvider.jsx'
 import Logo from './Logo.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
+import { getMyOrganizationApplication } from '../services/organizations.js'
+import { ACCOUNT_TYPES } from '../services/authRoles.js'
 
 function linkClass({ isActive }) {
   return isActive ? 'nav-link active' : 'nav-link'
 }
 
 export default function Navbar() {
-  const { user, signOut } = useAuth()
+  const {
+    user,
+    signOut,
+    organizationApplicationState,
+    setOrganizationApplicationState,
+  } = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const accountRef = useRef(null)
+
+  useEffect(() => {
+    if (!user || user.role === 'admin' || user.role === 'organization') {
+      setOrganizationApplicationState({
+        email: '',
+        application: null,
+        loading: false,
+        error: '',
+      })
+      return undefined
+    }
+
+    const email = user.email || ''
+    let active = true
+    setOrganizationApplicationState({ email, application: null, loading: true, error: '' })
+    getMyOrganizationApplication(email)
+      .then((application) => {
+        if (active) {
+          setOrganizationApplicationState({ email, application, loading: false, error: '' })
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setOrganizationApplicationState({
+            email,
+            application: null,
+            loading: false,
+            error: err.message || 'Could not load your organization application status.',
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [user, location.pathname, setOrganizationApplicationState])
 
   async function handleSignOut() {
     await signOut()
     setOpen(false)
     setAccountOpen(false)
     navigate('/')
+  }
+
+  async function handleSignOutToSignIn() {
+    await signOut()
+    close()
+    navigate('/signin')
   }
 
   function close() {
@@ -48,10 +97,61 @@ export default function Navbar() {
 
   const initial = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase()
   const profilePath = user?.role === 'organization' ? '/org/profile' : '/profile'
+  const studentPage = (
+    ['/dashboard', '/events', '/registrations', '/profile'].includes(location.pathname)
+    || /^\/events\/[^/]+(?:\/register)?$/.test(location.pathname)
+    || /^\/confirmation\/[^/]+$/.test(location.pathname)
+  )
+  const hasApplicationStatus = organizationApplicationState.email === user?.email
+    && !organizationApplicationState.loading
+  const application = hasApplicationStatus ? organizationApplicationState.application : null
+  const applicationStatus = String(application?.approvalStatus || '').toLowerCase()
+  let applicationLink = null
+  if (user?.role === 'student' && hasApplicationStatus && !organizationApplicationState.error) {
+    if (applicationStatus === 'pending') {
+      applicationLink = (
+        <NavLink to="/org/apply" className={linkClass} onClick={close}>
+          Application Under Review
+        </NavLink>
+      )
+    } else if (applicationStatus === 'rejected') {
+      applicationLink = (
+        <NavLink to="/org/apply" className={linkClass} onClick={close}>
+          {user.accountType === ACCOUNT_TYPES.ORGANIZATION_APPLICANT
+            ? 'View Application / Reapply'
+            : 'View Application'}
+        </NavLink>
+      )
+    } else if (applicationStatus === 'approved') {
+      applicationLink = (
+        <button type="button" className="nav-link" onClick={handleSignOutToSignIn}>
+          Approved — sign out to continue
+        </button>
+      )
+    } else if (applicationStatus === 'suspended') {
+      applicationLink = (
+        <NavLink to="/org/apply" className={linkClass} onClick={close}>
+          View Application
+        </NavLink>
+      )
+    } else if (user.accountType === ACCOUNT_TYPES.ORGANIZATION_APPLICANT) {
+      applicationLink = (
+        <NavLink to="/org/apply" className={linkClass} onClick={close}>
+          Apply as Organization
+        </NavLink>
+      )
+    }
+  } else if (
+    user?.role === 'student'
+    && organizationApplicationState.error
+    && user.accountType === ACCOUNT_TYPES.ORGANIZATION_APPLICANT
+  ) {
+    applicationLink = <span className="nav-link" role="status">Application status unavailable</span>
+  }
 
   return (
     <header className="nav">
-      <div className="nav-inner">
+      <div className={studentPage ? 'nav-inner nav-inner-student' : 'nav-inner'}>
         <NavLink to="/" className="brand" onClick={close}>
           <Logo />
         </NavLink>
@@ -105,11 +205,7 @@ export default function Navbar() {
               Organization signup
             </NavLink>
           )}
-          {user?.role === 'student' && (
-            <NavLink to="/org/apply" className={linkClass} onClick={close}>
-              Apply as Organization
-            </NavLink>
-          )}
+          {applicationLink}
           {user && (
             <div className="account-menu" ref={accountRef}>
               <button
