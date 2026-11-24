@@ -24,7 +24,6 @@ import AdminEvents from './pages/admin/AdminEvents.jsx'
 import AdminOrganizations from './pages/admin/AdminOrganizations.jsx'
 import AdminOverview from './pages/admin/AdminOverview.jsx'
 import AdminReports from './pages/admin/AdminReports.jsx'
-import AdminUsers from './pages/admin/AdminUsers.jsx'
 import OrgDashboard from './pages/org/OrgDashboard.jsx'
 import OrgEventForm from './pages/org/OrgEventForm.jsx'
 import OrgEvents from './pages/org/OrgEvents.jsx'
@@ -80,7 +79,6 @@ export default function App() {
               <Route path="organizations" element={<AdminOrganizations />} />
               <Route path="events" element={<AdminEvents />} />
               <Route path="events/new" element={<AdminEventForm />} />
-              <Route path="users" element={<AdminUsers />} />
               <Route path="reports" element={<AdminReports />} />
             </Route>
             <Route
