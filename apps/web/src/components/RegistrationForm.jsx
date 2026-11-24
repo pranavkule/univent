@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { validateRegistrationInput } from '../services/api.js'
+import { validateRegistrationInput } from '../services/registrationValidation.js'
 
 export default function RegistrationForm({ eventId, onSubmit, submitting, serverError, initialValues }) {
   const [values, setValues] = useState({

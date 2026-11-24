@@ -23,7 +23,7 @@ const getEvents = require('../../functions/getEvents')
 const createEvent = require('../../functions/createEvent')
 const register = require('../../functions/register')
 const getRegistrations = require('../../functions/getRegistrations')
-const { invoke, devHeaders } = require('../helpers')
+const { invoke, cognitoAuthorizer } = require('../helpers')
 
 const endpoint = process.env.DYNAMODB_ENDPOINT || 'http://127.0.0.1:8000'
 const region = process.env.AWS_REGION || 'us-east-1'
@@ -114,9 +114,6 @@ async function withDynamoEnv(fn) {
       AWS_REGION: region,
       AWS_ACCESS_KEY_ID: 'local',
       AWS_SECRET_ACCESS_KEY: 'local',
-      UNIVENT_DEV_AUTH: 'true',
-      AWS_EXECUTION_ENV: undefined,
-      AWS_SAM_LOCAL: undefined,
     },
     async () => {
       resetStore()
@@ -409,13 +406,22 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
     if (!requireLocal(t)) return
 
     const email = `handler.${suffix}@college.edu`
-    const admin = devHeaders('admin', 'admin@univent.demo', 'Demo Admin')
-    const student = devHeaders('student', email, 'Handler Student')
+    const admin = cognitoAuthorizer({
+      sub: 'integration-admin',
+      email: 'admin@ves.ac.in',
+      name: 'Integration Admin',
+      groups: ['admins'],
+    })
+    const student = cognitoAuthorizer({
+      sub: 'integration-student',
+      email,
+      name: 'Handler Student',
+    })
 
     await withDynamoEnv(async () => {
       const created = await invoke(createEvent.handler, {
         method: 'POST',
-        headers: admin,
+        authorizer: admin,
         body: {
           title: 'Handler Meetup',
           date: '2026-12-10',
@@ -432,7 +438,7 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
 
       const registered = await invoke(register.handler, {
         method: 'POST',
-        headers: student,
+        authorizer: student,
         body: {
           eventId: created.json.eventId,
           name: 'Handler Student',
@@ -445,7 +451,7 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
 
       const missing = await invoke(register.handler, {
         method: 'POST',
-        headers: student,
+        authorizer: student,
         body: {
           eventId: 'does-not-exist',
           name: 'Handler Student',
@@ -457,7 +463,7 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
       const rows = await invoke(getRegistrations.handler, {
         method: 'GET',
         path: '/registrations',
-        headers: student,
+        authorizer: student,
         query: { eventId: created.json.eventId },
       })
       assert.equal(rows.statusCode, 200)
@@ -467,7 +473,7 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
       const missingEvent = await invoke(getRegistrations.handler, {
         method: 'GET',
         path: '/registrations',
-        headers: student,
+        authorizer: student,
         query: { eventId: 'does-not-exist' },
       })
       assert.equal(missingEvent.statusCode, 404)
@@ -483,11 +489,15 @@ describe('DynamoDB store integration (DynamoDB Local)', () => {
     await withDynamoEnv(async () => {
       const res = await invoke(register.handler, {
         method: 'POST',
-        headers: devHeaders('student', 'asha@college.edu', 'Asha Sharma'),
+        authorizer: cognitoAuthorizer({
+          sub: 'integration-student',
+          email: 'asha@ves.ac.in',
+          name: 'Asha Sharma',
+        }),
         body: {
           eventId: event.eventId,
           name: 'Asha Sharma',
-          email: 'asha@college.edu',
+          email: 'asha@ves.ac.in',
         },
       })
       assert.equal(res.statusCode, 409)

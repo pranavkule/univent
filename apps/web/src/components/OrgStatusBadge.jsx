@@ -4,6 +4,8 @@
 const LABELS = {
   draft: 'Draft',
   pending: 'Pending Approval',
+  pending_verification: 'Pending Verification',
+  pending_approval: 'Pending Approval',
   published: 'Published',
   rejected: 'Rejected',
   cancelled: 'Cancelled',
@@ -16,8 +18,11 @@ export function statusLabel(status) {
 }
 
 export default function OrgStatusBadge({ status }) {
+  const statusClass = ['pending_verification', 'pending_approval'].includes(status)
+    ? 'pending'
+    : status || 'draft'
   return (
-    <span className={`status status-${status || 'draft'}`}>
+    <span className={`status status-${statusClass}`}>
       {statusLabel(status)}
     </span>
   )

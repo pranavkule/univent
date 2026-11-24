@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../components/AuthProvider.jsx'
 import { listOrgEvents, listOrgRegistrations } from '../../services/orgEvents.js'
-import { API_MODE } from '../../services/api.js'
 
 // Registrations are scoped to this organization by the live backend.
 export default function OrgRegistrations() {
@@ -54,8 +53,7 @@ export default function OrgRegistrations() {
   return (
     <>
       <p className="muted org-sub">
-        {regs.length} registration{regs.length === 1 ? '' : 's'} across your events.{' '}
-        {API_MODE === 'live' ? 'Live data from AWS.' : 'Mock data — stored in this browser only.'}
+        {regs.length} registration{regs.length === 1 ? '' : 's'} across your events. Live data from AWS.
       </p>
 
       <div className="toolbar" role="search">

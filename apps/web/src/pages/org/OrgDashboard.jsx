@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../components/AuthProvider.jsx'
 import OrgStatusBadge from '../../components/OrgStatusBadge.jsx'
 import { countRegistrationsByEvent, listOrgEvents, listOrgRegistrations } from '../../services/orgEvents.js'
-import { API_MODE } from '../../services/api.js'
 
-// Organization overview: event and registration data follows the selected API mode.
+// Organization overview: event and registration data comes from the AWS API.
 export default function OrgDashboard() {
   const { user } = useAuth()
   const orgEmail = user?.email || ''
@@ -38,7 +37,6 @@ export default function OrgDashboard() {
   const stats = useMemo(() => ({
     total: events.length,
     published: events.filter((e) => e.status === 'published').length,
-    pending: events.filter((e) => e.status === 'pending').length,
   }), [events])
 
   if (loading) {
@@ -56,8 +54,7 @@ export default function OrgDashboard() {
   return (
     <>
       <p className="muted org-sub">
-        Welcome, {user?.name}. Overview of your events and registrations.{' '}
-        {API_MODE === 'live' ? 'Live data from AWS.' : 'Mock data — stored in this browser only.'}
+        Welcome, {user?.name}. Overview of your events and registrations. Live data from AWS.
       </p>
       <div className="org-stats" role="list" aria-label="Organization summary">
         <div className="org-stat" role="listitem">
@@ -68,12 +65,6 @@ export default function OrgDashboard() {
           <span className="org-stat-value">{stats.published}</span>
           <span className="org-stat-label">Published Events</span>
         </div>
-        {API_MODE === 'mock' && (
-          <div className="org-stat" role="listitem">
-            <span className="org-stat-value">{stats.pending}</span>
-            <span className="org-stat-label">Pending Approvals</span>
-          </div>
-        )}
         <div className="org-stat" role="listitem">
           <span className="org-stat-value">{totalRegs}</span>
           <span className="org-stat-label">Total Registrations</span>

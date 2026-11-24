@@ -177,6 +177,79 @@ function validateOrganizationApplicationInput(body, principal, domain = 'ves.ac.
   }
 }
 
+function validatePublicOrganizationApplicationInput(body, domain = 'ves.ac.in') {
+  const source = body || {}
+  const errors = {}
+  const allowed = new Set([
+    'organizationName',
+    'applicantName',
+    'officialEmail',
+    'department',
+    'representativeTitle',
+    'representativePhone',
+    'reason',
+    'password',
+  ])
+  for (const key of Object.keys(source)) {
+    if (!allowed.has(key)) errors[key] = `${key} is not allowed.`
+  }
+
+  const organizationName = trimmed(source.organizationName)
+  const applicantName = trimmed(source.applicantName)
+  const officialEmail = trimmed(source.officialEmail).toLowerCase()
+  const department = trimmed(source.department)
+  const representativeTitle = trimmed(source.representativeTitle)
+  const representativePhone = trimmed(source.representativePhone)
+  const reason = trimmed(source.reason)
+  const password = typeof source.password === 'string' ? source.password : ''
+  const allowedDomain = String(domain || 'ves.ac.in').trim().toLowerCase()
+
+  if (organizationName.length < 2 || organizationName.length > 120) {
+    errors.organizationName = 'Organization name must be between 2 and 120 characters.'
+  }
+  if (applicantName.length < 2 || applicantName.length > MAX_NAME) {
+    errors.applicantName = `Contact name must be between 2 and ${MAX_NAME} characters.`
+  }
+  if (!EMAIL_PATTERN.test(officialEmail) || officialEmail.length > MAX_EMAIL) {
+    errors.officialEmail = 'Enter a valid official organization email address.'
+  } else if (officialEmail.split('@')[1] !== allowedDomain) {
+    errors.officialEmail = `Use an @${allowedDomain} organization email address.`
+  }
+  if (department.length < 2 || department.length > 100) {
+    errors.department = 'Department or category must be between 2 and 100 characters.'
+  }
+  if (representativeTitle.length < 2 || representativeTitle.length > 100) {
+    errors.representativeTitle = 'Position must be between 2 and 100 characters.'
+  }
+  if (reason.length < 10 || reason.length > 1000) {
+    errors.reason = 'Explain the access request in 10 to 1000 characters.'
+  }
+  if (
+    representativePhone
+    && !/^[+()\d .-]{7,32}$/.test(representativePhone)
+  ) {
+    errors.representativePhone = 'Enter a valid contact phone number.'
+  }
+  if (password.length < 8 || password.length > 256) {
+    errors.password = 'Password must be between 8 and 256 characters.'
+  } else if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    errors.password = 'Use uppercase, lowercase, and a number.'
+  }
+
+  return {
+    values: {
+      organizationName,
+      applicantName,
+      officialEmail,
+      department,
+      representativeTitle,
+      ...(representativePhone ? { representativePhone } : {}),
+      reason,
+    },
+    errors,
+  }
+}
+
 function firstError(errors) {
   const keys = Object.keys(errors || {})
   return keys.length > 0 ? errors[keys[0]] : 'Invalid request.'
@@ -190,5 +263,6 @@ module.exports = {
   validateEventInput,
   validateRegistrationInput,
   validateOrganizationApplicationInput,
+  validatePublicOrganizationApplicationInput,
   firstError,
 }

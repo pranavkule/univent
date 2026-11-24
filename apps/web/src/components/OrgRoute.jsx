@@ -8,7 +8,7 @@ export default function OrgRoute({ children }) {
   const { user } = useAuth()
   const location = useLocation()
   if (!user) {
-    return <Navigate to="/signin" replace state={{ from: location.pathname }} />
+    return <Navigate to="/org/signin" replace state={{ from: location.pathname }} />
   }
   if ((user.role || '').toLowerCase() !== 'organization') {
     return <Navigate to="/events" replace />

@@ -11,7 +11,7 @@ The application uses AWS serverless services to provide API-driven functionality
 - **Student portal:** Browse events, view event details, and register for events.
 - **Organization portal:** Apply for organization access and manage events after approval.
 - **Admin portal:** Review organization applications and approve, reject, or suspend organizations.
-- **Email verification:** Verify college email addresses through Amazon Cognito.
+- **Student email verification:** Verify student college email addresses through Amazon Cognito.
 - **Role-based authorization:** Restrict organization and administrative operations to authorized users.
 - **Event registration:** Validate registrations and enforce event capacity rules.
 - **Responsive interface:** Web interface built with React and Vite.
@@ -65,10 +65,12 @@ The frontend communicates with the backend through API Gateway. Lambda functions
 - Register for events subject to eligibility and capacity rules.
 
 ### Organization
-- Register and verify a college email address.
-- Submit an organization access application.
-- Wait for administrator approval.
-- Manage events after approval and authorization.
+- Apply with the official organization email, contact details, and a password
+  selected for that organization account.
+- Wait for administrator approval; the account is provisioned only after
+  approval and does not use email OTP.
+- Sign in separately with the official organization email and its password.
+- Manage only the events owned by that organization account.
 
 ### Administrator
 - Sign in through an authorized administrator account.
@@ -126,12 +128,9 @@ npm install
 Create a `.env.local` file inside `apps/web/`:
 
 ```dotenv
-VITE_API_MODE=live
 VITE_API_URL=https://ng4iz34pfb.execute-api.us-east-1.amazonaws.com/Prod
 
-VITE_AUTH_MODE=cognito
 VITE_ALLOWED_EMAIL_DOMAIN=ves.ac.in
-VITE_DEV_AUTH=false
 
 VITE_COGNITO_REGION=us-east-1
 VITE_COGNITO_USER_POOL_ID=us-east-1_KGPCzB46L
@@ -139,6 +138,13 @@ VITE_COGNITO_CLIENT_ID=215vq2fi0hif59jpn4700mb6ar
 ```
 
 These settings point the frontend to the configured UniVent AWS backend and Cognito user pool.
+
+Organization applications use the official organization email, not a student's
+personal account. The selected password is stored only as short-lived KMS
+ciphertext until an administrator approves or rejects the application. Approval
+provisions a separate Cognito account without sending an email OTP; the
+organization can then sign in with its official email and selected password.
+The existing student account and its login remain independent.
 
 The values above identify the frontend's API and authentication configuration. They are not AWS access keys. Never put AWS secret keys, session tokens, or other private credentials in frontend environment variables.
 
@@ -160,13 +166,15 @@ Open that URL in your browser.
 
 ### 5. Test authentication and functionality
 
-- Register with an eligible `ves.ac.in` email address.
-- Complete email verification.
+- Register with a personal `ves.ac.in` email address and complete student email
+  verification.
 - Sign in and browse events.
 - Test event registration.
-- Submit an organization application using a separate test account.
-- Sign in using an authorized administrator account to review the application.
-- Verify that organization functionality becomes available only after approval.
+- Submit an organization application with a distinct official organization
+  email and a separately selected password.
+- Sign in using the existing administrator account to review the application.
+- After approval, sign in through Organization Login and verify that
+  organization functionality is available only to that separate account.
 
 The organization workflow requires the backend's authorization checks to pass. Do not manually grant organization privileges to bypass the approval process.
 
@@ -182,11 +190,13 @@ https://ng4iz34pfb.execute-api.us-east-1.amazonaws.com/Prod
 |---|---|---|
 | GET | `/events` | Retrieve events |
 | POST | `/events` | Create an event with appropriate authorization |
+| GET | `/organization/events` | List events owned by the organization |
+| PUT | `/events/{eventId}` | Update an owned event |
 | POST | `/register` | Register for an event |
 | GET | `/registrations` | Retrieve registrations subject to authorization |
 | GET | `/organization-applications` | Retrieve organization applications with appropriate authorization |
 | POST | `/organization-applications` | Submit an organization application |
-| PATCH | `/admin/organization-applications/{userSub}` | Update an organization's application status |
+| PATCH | `/admin/organization-applications/{applicationId}` | Approve or reject an organization application |
 
 Protected endpoints require the appropriate authentication and authorization. Refer to the backend implementation for request schemas, response formats, validation rules, and error codes.
 

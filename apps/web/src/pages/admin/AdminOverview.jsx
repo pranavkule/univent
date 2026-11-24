@@ -1,31 +1,27 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import OrgStatusBadge from '../../components/OrgStatusBadge.jsx'
-import { API_MODE } from '../../services/api.js'
 import { getPlatformSummary, listRecentActivity } from '../../services/admin.js'
-import { listAllOrgEvents } from '../../services/orgEvents.js'
 import { listOrganizations } from '../../services/organizations.js'
 
-// Admin overview: platform totals, pending approval queues, and recent
-// activity derived from available mock records. Mock data only.
+// Admin overview: platform totals, pending organization approvals, and recent
+// activity loaded through the live API.
 export default function AdminOverview() {
   const [summary, setSummary] = useState(null)
   const [pendingOrgs, setPendingOrgs] = useState([])
-  const [pendingEvents, setPendingEvents] = useState([])
   const [activity, setActivity] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([getPlatformSummary(), listOrganizations(), listAllOrgEvents(), listRecentActivity()])
-      .then(([sum, orgs, events, feed]) => {
+    Promise.all([getPlatformSummary(), listOrganizations(), listRecentActivity()])
+      .then(([sum, orgs, feed]) => {
         if (cancelled) return
         setSummary(sum)
-        setPendingOrgs(orgs.filter((o) => o.approvalStatus === 'pending')
+        setPendingOrgs(orgs.filter((o) =>
+          ['pending', 'pending_verification', 'pending_approval'].includes(o.approvalStatus))
           .sort((a, b) => String(a.appliedAt).localeCompare(String(b.appliedAt))))
-        setPendingEvents(events.filter((e) => e.status === 'pending')
-          .sort((a, b) => String(a.date).localeCompare(String(b.date))))
         setActivity(feed)
       })
       .catch((err) => {
@@ -43,10 +39,9 @@ export default function AdminOverview() {
   if (error) return <div className="alert alert-error" role="alert">{error}</div>
 
   const cards = [
-    { label: 'Total Users', value: summary.totalUsers },
     { label: 'Total Organizations', value: summary.totalOrganizations },
-    { label: 'Pending Organization Approvals', value: summary.pendingOrgApprovals },
-    { label: 'Pending Event Approvals', value: summary.pendingEventApprovals },
+    { label: 'Approved Organizations', value: summary.approvedOrganizations },
+    { label: 'Pending Organization Applications', value: summary.pendingOrgApprovals },
     { label: 'Total Events', value: summary.totalEvents },
     { label: 'Total Registrations', value: summary.totalRegistrations },
   ]
@@ -54,10 +49,7 @@ export default function AdminOverview() {
   return (
     <>
       <p className="muted org-sub">
-        Platform health at a glance.{' '}
-        {API_MODE === 'mock'
-          ? 'Mock data — stored in this browser only.'
-          : 'Organization applications, system events, and registrations load through the live API; some reports and the user directory remain demo data.'}
+        Platform health at a glance. Organization applications, events, and registrations load through the live API.
       </p>
       <div className="org-stats" role="list" aria-label="Platform summary">
         {cards.map((c) => (
@@ -70,7 +62,7 @@ export default function AdminOverview() {
 
       <section aria-labelledby="admin-pending-orgs" className="org-section">
         <div className="org-section-head">
-          <h3 id="admin-pending-orgs">Pending organization approvals</h3>
+          <h3 id="admin-pending-orgs">Organization applications awaiting review</h3>
           <Link className="link-more" to="/admin/organizations">Manage organizations</Link>
         </div>
         {pendingOrgs.length === 0 ? (
@@ -96,41 +88,13 @@ export default function AdminOverview() {
         )}
       </section>
 
-      <section aria-labelledby="admin-pending-events" className="org-section">
-        <div className="org-section-head">
-          <h3 id="admin-pending-events">Pending event approvals</h3>
-          <Link className="link-more" to="/admin/events">Manage events</Link>
-        </div>
-        {pendingEvents.length === 0 ? (
-          <div className="alert alert-empty">No events awaiting approval.</div>
-        ) : (
-          <div className="org-table-wrap">
-            <table className="reg-table">
-              <thead>
-                <tr><th>Event</th><th>Organization</th><th>Date</th><th>Status</th></tr>
-              </thead>
-              <tbody>
-                {pendingEvents.slice(0, 5).map((e) => (
-                  <tr key={e.eventId}>
-                    <td>{e.title}</td>
-                    <td>{e.orgName || e.orgEmail}</td>
-                    <td>{e.date}</td>
-                    <td><OrgStatusBadge status={e.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       <section aria-labelledby="admin-activity" className="org-section">
         <div className="org-section-head">
           <h3 id="admin-activity">Recent platform activity</h3>
           <Link className="link-more" to="/admin/reports">Reports &amp; activity</Link>
         </div>
         {activity.length === 0 ? (
-          <div className="alert alert-empty">No recent activity in the mock records.</div>
+          <div className="alert alert-empty">No recent activity.</div>
         ) : (
           <div className="org-table-wrap">
             <table className="reg-table">

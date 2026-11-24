@@ -56,7 +56,7 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="container org-shell">
+    <div className="org-shell">
       <aside className="org-side" aria-label="Administration">
         <nav aria-label="Administration sections">
           <ul className="org-nav">

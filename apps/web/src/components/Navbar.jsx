@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthProvider.jsx'
 import Logo from './Logo.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
@@ -66,9 +66,14 @@ export default function Navbar() {
             </NavLink>
           )}
           {user?.role === 'organization' ? (
-            <NavLink to="/org" className={linkClass} onClick={close}>
-              Organization
-            </NavLink>
+            <>
+              <NavLink to="/org" className={linkClass} onClick={close}>
+                Organization workspace
+              </NavLink>
+              <NavLink to="/org/apply" className={linkClass} onClick={close}>
+                Organization application
+              </NavLink>
+            </>
           ) : user?.role === 'admin' ? (
             <NavLink to="/admin" className={linkClass} onClick={close}>
               Admin
@@ -92,22 +97,27 @@ export default function Navbar() {
           )}
           {!user && (
             <NavLink to="/signin" className={linkClass} onClick={close}>
-              Sign in
+              Student sign in
             </NavLink>
           )}
           {!user && (
             <NavLink to="/signup" className="btn btn-nav" onClick={close}>
-              Sign up
+              Student sign up
+            </NavLink>
+          )}
+          {user?.role !== 'organization' && (
+            <NavLink to="/org/signin" className={linkClass} onClick={close}>
+              Organization login
+            </NavLink>
+          )}
+          {user?.role !== 'organization' && (
+            <NavLink to="/org/signup" className={linkClass} onClick={close}>
+              Organization application
             </NavLink>
           )}
           {!user && (
-            <NavLink to="/org/signup" className={linkClass} onClick={close}>
-              Organization signup
-            </NavLink>
-          )}
-          {user?.role === 'student' && (
-            <NavLink to="/org/apply" className={linkClass} onClick={close}>
-              Apply as Organization
+            <NavLink to="/admin/signin" className={linkClass} onClick={close}>
+              Admin login
             </NavLink>
           )}
           {user && (

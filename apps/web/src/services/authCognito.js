@@ -6,23 +6,31 @@ import {
 } from 'amazon-cognito-identity-js'
 
 import { COGNITO, assertCognitoConfig } from './authConfig.js'
-import { roleFromGroups } from './authRoles.js'
+import { accountTypeFromClaims, roleFromGroups } from './authRoles.js'
 
-let pool = null
+const pools = new Map()
+let passwordChangeUser = null
 
-function getPool() {
+function getPool(clientId = COGNITO.clientId) {
   assertCognitoConfig()
-  if (!pool) {
-    pool = new CognitoUserPool({
-      UserPoolId: COGNITO.userPoolId,
-      ClientId: COGNITO.clientId,
-    })
+  if (!clientId) throw new Error('A Cognito app client is required for this authentication action.')
+  if (clientId !== COGNITO.clientId) {
+    throw new Error('The Cognito app client is not configured for this authentication action.')
   }
-  return pool
+  if (!pools.has(clientId)) {
+    pools.set(clientId, new CognitoUserPool({
+      UserPoolId: COGNITO.userPoolId,
+      ClientId: clientId,
+    }))
+  }
+  return pools.get(clientId)
 }
 
-function cognitoUser(email) {
-  return new CognitoUser({ Username: String(email || '').trim().toLowerCase(), Pool: getPool() })
+function cognitoUser(email, clientId) {
+  return new CognitoUser({
+    Username: String(email || '').trim().toLowerCase(),
+    Pool: getPool(clientId),
+  })
 }
 
 function publicUserFromClaims(claims) {
@@ -32,6 +40,7 @@ function publicUserFromClaims(claims) {
     name,
     email,
     role: roleFromGroups(claims['cognito:groups']),
+    accountType: accountTypeFromClaims(claims),
     groups: claims['cognito:groups'] || [],
   }
 }
@@ -92,7 +101,7 @@ function mapError(err, action = 'signin') {
   return new Error((err && err.message) || 'Authentication failed. Try again.')
 }
 
-export async function signUp({ name, email, password }) {
+async function signUpWithClient({ name, email, password }, clientId) {
   const cleanEmail = String(email || '').trim().toLowerCase()
   const cleanName = String(name || '').trim()
   const attributes = [
@@ -101,7 +110,7 @@ export async function signUp({ name, email, password }) {
   ]
 
   return new Promise((resolve, reject) => {
-    getPool().signUp(cleanEmail, password, attributes, null, (err, result) => {
+    getPool(clientId).signUp(cleanEmail, password, attributes, null, (err, result) => {
       if (err) {
         reject(mapError(err))
         return
@@ -110,13 +119,18 @@ export async function signUp({ name, email, password }) {
         needsConfirmation: result.userConfirmed === false,
         email: result.user.getUsername(),
         name: cleanName,
+        clientId,
       })
     })
   })
 }
 
-export async function confirmSignUp({ email, code }) {
-  const user = cognitoUser(email)
+export function signUp(input) {
+  return signUpWithClient(input, COGNITO.clientId)
+}
+
+export async function confirmSignUp({ email, code, clientId }) {
+  const user = cognitoUser(email, clientId || COGNITO.clientId)
   return new Promise((resolve, reject) => {
     user.confirmRegistration(String(code || '').trim(), true, (err, result) => {
       if (err) {
@@ -128,8 +142,8 @@ export async function confirmSignUp({ email, code }) {
   })
 }
 
-export async function resendConfirmationCode({ email }) {
-  const user = cognitoUser(email)
+export async function resendConfirmationCode({ email, clientId }) {
+  const user = cognitoUser(email, clientId || COGNITO.clientId)
   return new Promise((resolve, reject) => {
     user.resendConfirmationCode((err, result) => {
       if (err) {
@@ -142,9 +156,10 @@ export async function resendConfirmationCode({ email }) {
 }
 
 export async function signIn({ email, password }) {
-  const user = cognitoUser(email)
+  const cleanEmail = String(email || '').trim().toLowerCase()
+  const user = cognitoUser(cleanEmail)
   const details = new AuthenticationDetails({
-    Username: String(email || '').trim().toLowerCase(),
+    Username: cleanEmail,
     Password: password,
   })
 
@@ -159,13 +174,33 @@ export async function signIn({ email, password }) {
       },
       onFailure: (err) => reject(mapError(err)),
       newPasswordRequired: () => {
-        reject(new Error('Your account requires a password change. Ask an administrator for help.'))
+        passwordChangeUser = user
+        resolve({ requiresPasswordChange: true })
       },
     })
   })
 }
 
+export async function completeNewPassword(newPassword) {
+  const user = passwordChangeUser
+  if (!user) throw new Error('No Cognito password-change challenge is active. Sign in again.')
+  return new Promise((resolve, reject) => {
+    user.completeNewPasswordChallenge(newPassword, {}, {
+      onSuccess: (session) => {
+        passwordChangeUser = null
+        try {
+          resolve(publicUserFromSession(session))
+        } catch (err) {
+          reject(mapError(err))
+        }
+      },
+      onFailure: (err) => reject(mapError(err)),
+    })
+  })
+}
+
 export async function signOut() {
+  passwordChangeUser = null
   const user = getPool().getCurrentUser()
   if (user) user.signOut()
 }

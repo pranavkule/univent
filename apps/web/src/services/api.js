@@ -1,85 +1,21 @@
-import { API_BASE_URL, API_MODE } from './apiConfig.js'
+import { API_BASE_URL } from './apiConfig.js'
 import { getAuthHeaders } from './auth.js'
 import { createLiveApi } from './liveApi.js'
-import { ApiError } from './apiError.js'
-import * as mockApi from './mockApi.js'
 
 export { ApiError } from './apiError.js'
-export { API_MODE }
 
-const impl = API_MODE === 'live'
-  ? createLiveApi({ baseUrl: API_BASE_URL, getAuthHeaders })
-  : mockApi
+const impl = createLiveApi({ baseUrl: API_BASE_URL, getAuthHeaders })
 
-export const validateRegistrationInput = mockApi.validateRegistrationInput
-export const listMockRegistrations = mockApi.listMockRegistrations
-
-export function listEvents(...args) {
-  return impl.listEvents(...args)
-}
-
-export function getEvent(...args) {
-  return impl.getEvent(...args)
-}
-
-export function createEvent(...args) {
-  return impl.createEvent(...args)
-}
-
-export function listOrganizationEvents(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Organization event APIs are not available in mock mode.', 501)
-  }
-  return impl.listOrganizationEvents(...args)
-}
-
-export function updateEvent(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Event updates are not available in mock API mode.', 501)
-  }
-  return impl.updateEvent(...args)
-}
-
-export function getOrganizationApplication(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
-  }
-  return impl.getOrganizationApplication(...args)
-}
-
-export function submitOrganizationApplication(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
-  }
-  return impl.submitOrganizationApplication(...args)
-}
-
-export function listOrganizationApplications(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
-  }
-  return impl.listOrganizationApplications(...args)
-}
-
-export function decideOrganizationApplication(...args) {
-  if (API_MODE !== 'live') {
-    throw new ApiError('Organization application APIs are not available in mock mode.', 501)
-  }
-  return impl.decideOrganizationApplication(...args)
-}
-
-export function createRegistration(...args) {
-  return impl.createRegistration(...args)
-}
-
-export function listRegistrations(...args) {
-  return impl.listRegistrations(...args)
-}
-
-export function getRegistration(...args) {
-  return impl.getRegistration(...args)
-}
-
-export function cancelRegistration(...args) {
-  return impl.cancelRegistration(...args)
-}
+export const listEvents = impl.listEvents
+export const getEvent = impl.getEvent
+export const createEvent = impl.createEvent
+export const listOrganizationEvents = impl.listOrganizationEvents
+export const updateEvent = impl.updateEvent
+export const getOrganizationApplication = impl.getOrganizationApplication
+export const submitOrganizationApplication = impl.submitOrganizationApplication
+export const listOrganizationApplications = impl.listOrganizationApplications
+export const decideOrganizationApplication = impl.decideOrganizationApplication
+export const createRegistration = impl.createRegistration
+export const listRegistrations = impl.listRegistrations
+export const getRegistration = impl.getRegistration
+export const cancelRegistration = impl.cancelRegistration

@@ -9,6 +9,7 @@ const CODES = {
   CAPACITY_BELOW_REGISTRATIONS: 'CAPACITY_BELOW_REGISTRATIONS',
   ORGANIZATION_APPLICATION_EXISTS: 'ORGANIZATION_APPLICATION_EXISTS',
   ORGANIZATION_APPLICATION_CONFLICT: 'ORGANIZATION_APPLICATION_CONFLICT',
+  ORGANIZATION_ACCOUNT_EXISTS: 'ORGANIZATION_ACCOUNT_EXISTS',
 }
 
 const MESSAGES = {
@@ -20,9 +21,11 @@ const MESSAGES = {
   [CODES.CAPACITY_BELOW_REGISTRATIONS]:
     'Capacity cannot be lower than the number of confirmed registrations.',
   [CODES.ORGANIZATION_APPLICATION_EXISTS]:
-    'An organization application already exists for this account.',
+    'An active application already exists for this official organization email.',
   [CODES.ORGANIZATION_APPLICATION_CONFLICT]:
     'The organization application changed before this request completed.',
+  [CODES.ORGANIZATION_ACCOUNT_EXISTS]:
+    'An account already uses this email and cannot be linked automatically.',
 }
 
 class StoreError extends Error {

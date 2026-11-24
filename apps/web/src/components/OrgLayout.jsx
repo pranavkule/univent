@@ -62,7 +62,7 @@ export default function OrgLayout() {
   }
 
   return (
-    <div className="container org-shell">
+    <div className="org-shell">
       <aside className="org-side" aria-label="Organization">
         <nav aria-label="Organization sections">
           <ul className="org-nav">

@@ -8,32 +8,46 @@ set before updating the existing stack.
 
 ## What the repository currently defines
 
-- `infrastructure/template.yaml` creates a regional API Gateway **REST API**
+- `infrastructure/template.yaml` defines a regional API Gateway **REST API**
   (`AWS::Serverless::Api`, stage `Prod`), Node.js 22 Lambda functions,
-  three on-demand DynamoDB tables, the `OwnerEmailIndex` and
-  `OrganizationOwnerIndex` GSIs, a Cognito user pool,
-  a public app client, two groups, and the PreSignUp trigger.
-- The API paths include public `GET /events` and Cognito-protected event,
-  registration, and organization application routes:
+  DynamoDB tables for events, registrations, legacy/current organization
+  applications, duplicate locks, and encrypted password secrets, the
+  `OwnerEmailIndex` and `OrganizationOwnerIndex` GSIs, the Cognito user pool
+  and clients, the existing groups, a retained KMS key, and the PreSignUp
+  trigger.
+- The API paths include public `GET /events` and public, throttled
+  `POST /organization-applications`; Cognito-protected event, registration,
+  application-read, and admin-review routes include:
   `POST /events`, `GET /organization/events`, `PUT /events/{eventId}`,
-  `POST /register`, `GET /registrations`, `GET/POST /organization-applications`,
-  and `PATCH /admin/organization-applications/{userSub}`. The API output
+  `POST /register`, `GET /registrations`, `GET /organization-applications`,
+  and `PATCH /admin/organization-applications/{applicationId}`. The API output
   includes `/Prod`.
 - Lambda table names and `UNIVENT_STORE=dynamodb` are wired from CloudFormation
   references. Outputs provide the API URL, Cognito IDs/region, and table/index
-  names, including `OrganizationApplicationsTableName`.
+  names, including the legacy application table, public application table, and
+  application duplicate-lock table. The encrypted password table and KMS key
+  are internal stack resources.
 - The functions package AWS SDK v3 DynamoDB and Cognito identity-provider
   dependencies from
   `backend/functions/package-lock.json`. The runtime is `nodejs22.x`.
 - DynamoDB uses on-demand billing and server-side encryption. The registration
   table has `eventId`/`email` keys and the `ownerEmail`/`eventId` GSI. The
   Events table has an `ownerSub`/`eventId` GSI; it is sparse, so existing
-  ownerless seeded events remain intact and Admin-managed. The new
-  `OrganizationApplications` table is keyed by `userSub`; the Admin list scans
-  it and should be paginated/indexed if its volume grows.
-- Cognito self-sign-up checks the exact `ves.ac.in` domain and requires email
-  verification. The browser uses the Cognito SDK directly; it does not use a
-  Hosted UI, so callback/logout URLs are not currently part of this flow.
+  ownerless seeded events remain intact and Admin-managed. The legacy
+  `OrganizationApplications` table is keyed by `userSub`; new applications
+  use the UUID-keyed public applications table and a Cognito-sub index.
+- Cognito self-sign-up is allowed only through the student app client and
+  checks the exact `ves.ac.in` domain. Student email verification is unchanged.
+  The retained legacy organization client is blocked from new self-sign-up.
+  New organization accounts are created only after Admin approval, with email
+  delivery suppressed and the submitted password set directly. The browser
+  uses the Cognito SDK directly; it does not use a Hosted UI, so callback/
+  logout URLs are not currently part of this flow.
+- A prior read-only inspection found no custom schema attributes on the
+  deployed User Pool, while the local template declares custom schema
+  attributes. The new authorization flow does not depend on them. Compare the
+  deployed configuration and CloudFormation change set before updating; do not
+  accept any User Pool replacement.
 - `CORS_ORIGIN` and API Gateway CORS currently allow `*`; the template does not
   expose a deploy-time origin parameter despite the comment saying Phase 7
   should pin it. This is usable for a classroom smoke test, but should be
@@ -56,11 +70,14 @@ set before updating the existing stack.
    relationship, DynamoDB table/index access, CloudWatch Logs permissions, and
    that the caller can pass it. It must allow the new owner-index queries and
    event updates, plus `dynamodb:TransactWriteItems` on both Events and
-   Registrations for student registration. The application Lambda also needs
-   `dynamodb:GetItem`, `PutItem`, `Scan`, and `UpdateItem` on the application
-   table and `cognito-idp:AdminAddUserToGroup` /
-   `cognito-idp:AdminRemoveUserFromGroup` on the configured User Pool. Verify
-   the Learner Lab permits both Cognito actions; local SAM/tests do not prove
+   Registrations for student registration. The organization-applications
+   Lambda also needs access to the application, lock, and encrypted-password
+   tables; `kms:Encrypt`/`kms:Decrypt` on the retained key; and Cognito
+   `AdminCreateUser`, `AdminDeleteUser`, `AdminDisableUser`, `AdminEnableUser`,
+   `AdminGetUser`, `AdminSetUserPassword`, `AdminUserGlobalSignOut`,
+   `AdminAddUserToGroup`, and `AdminRemoveUserFromGroup` on the configured
+   User Pool. The PreSignUp Lambda needs read-only `ListUserPoolClients`.
+   Verify the Learner Lab permits these actions; local SAM/tests do not prove
    account permissions. Supplying this role uses the same role for all
    functions and gives up the template's per-function least privilege.
 3. **Hosting choice and URL:** The repository has no S3/CloudFront resources.
@@ -73,14 +90,15 @@ set before updating the existing stack.
    restricted classroom demo. To pin CORS to S3/CloudFront, the SAM template
    must first expose and use a configurable allowed origin; the current
    template cannot do this through a parameter.
-5. **Organization approval:** Organization representatives self-register
-   using `/org/signup`, confirm their college email, sign in, and apply at
-   `/org/apply`. Admins review requests in Admin > Organizations; the backend
-   grants/removes Cognito group membership as decisions are saved. Do not
-   manually grant the organization group as a substitute for approval.
-   Existing group-only accounts must submit an application and be approved
-   before organization APIs work. New events publish immediately; event
-   moderation and cancellation are not available.
+5. **Organization approval:** Organizations apply at `/org/signup` with the
+   official college-domain email and a separately selected password; no
+   Cognito account or email OTP is involved at submission. The password stays
+   encrypted for up to 30 days. Admin approval provisions a separate account
+   and grants group membership without sending a Cognito email. Rejection
+   preserves history and deletes the encrypted password. Do not manually grant
+   the organization group as a substitute for approval. Legacy/group-only
+   accounts are not automatically adopted by this flow. New events publish
+   immediately; event moderation and cancellation are not available.
 6. **Monitoring:** Lambda logs can be emitted through the basic execution
    policy, but API Gateway access logs, retention, and alarms are not
    configured. Confirm Academy permissions and decide whether to add these
@@ -127,8 +145,10 @@ hosting choices are settled.
 
    Otherwise, omit `--parameter-overrides` to use the default per-function
    roles. Do this only if the Academy account permits the role and policy
-   creation requested by CloudFormation. Choose a unique stack name. Do not
-   accept an unexpected change set.
+   creation requested by CloudFormation. Use the existing stack name that
+   owns the deployed User Pool; deploying under a new name would create a
+   separate pool and is not an acceptable migration. Review the change set
+   and do not accept unexpected User Pool, group, or table replacement/deletion.
 
 2. **Read stack outputs** (read-only; use the exact stack name chosen above):
 
@@ -158,14 +178,13 @@ hosting choices are settled.
    `apps/web/.env.production.local` file, then build:
 
    ```dotenv
-   VITE_API_MODE=live
    VITE_API_URL=<ApiUrl-output>
-   VITE_AUTH_MODE=cognito
    VITE_ALLOWED_EMAIL_DOMAIN=ves.ac.in
-   VITE_DEV_AUTH=false
    VITE_COGNITO_REGION=<CognitoRegion-output>
    VITE_COGNITO_USER_POOL_ID=<UserPoolId-output>
    VITE_COGNITO_CLIENT_ID=<UserPoolClientId-output>
+   # Optional only for legacy organization signup confirmations.
+   VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID=<OrganizationApplicantUserPoolClientId-output>
    ```
 
    ```powershell
@@ -222,11 +241,12 @@ matching Cognito outputs:
   frontend origin (CORS).
 - Protected `GET /organization/events` and `PUT /events/{eventId}` also reject
   missing/invalid tokens with `401`.
-- Submit an organization application. Before approval, verify it is `PENDING`
-  and organization event/registration routes return `403`. As Admin, verify
-  the application list, reject with a reason, and verify stale organization
-  group claims still receive `403`. Approve it and verify the group and
-  persisted state allow organization features.
+- Submit an organization application using its official email and selected
+  password. Verify `PENDING_APPROVAL`, confirm no Cognito user or email OTP is
+  created, then approve and verify the separate account can sign in with that
+  email/password. Confirm the student account remains independent, organization
+  APIs deny pending/rejected applications, and stale group claims do not bypass
+  suspension.
 - Sign up a student at the allowed domain, receive/enter the email code, sign
   in, and confirm the app sends the ID token. Check student registration
   history is limited to that student.

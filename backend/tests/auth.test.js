@@ -9,14 +9,12 @@ const {
   isOrganization,
   hasRole,
 } = require('../functions/lib/principal')
-const { isAllowedEmail, handler: preSignUp } = require('../functions/preSignUp')
+const { isAllowedEmail, createHandler } = require('../functions/preSignUp')
 
 const originalEnv = { ...process.env }
 const ENV_KEYS = [
-  'UNIVENT_DEV_AUTH',
-  'AWS_EXECUTION_ENV',
-  'AWS_SAM_LOCAL',
   'ALLOWED_SIGNUP_DOMAIN',
+  'STUDENT_CLIENT_NAME',
 ]
 
 function restoreEnv() {
@@ -34,16 +32,14 @@ function jwtClaimsEvent(claims) {
   return { headers: {}, requestContext: { authorizer: { jwt: { claims } } } }
 }
 
-function devEvent(headers) {
+function requestWithHeaders(headers) {
   return { headers, requestContext: {} }
 }
 
 beforeEach(() => {
   restoreEnv()
-  delete process.env.UNIVENT_DEV_AUTH
-  delete process.env.AWS_EXECUTION_ENV
-  delete process.env.AWS_SAM_LOCAL
   delete process.env.ALLOWED_SIGNUP_DOMAIN
+  process.env.STUDENT_CLIENT_NAME = 'univent-web'
 })
 
 after(() => {
@@ -101,80 +97,36 @@ describe('principal resolution', () => {
     assert.equal(principal.source, 'authorizer-claims')
   })
 
-  it('prefers trusted authorizer claims over development headers', () => {
-    process.env.UNIVENT_DEV_AUTH = 'true'
-
-    const principal = resolvePrincipal({
-      headers: {
-        'x-univent-role': 'admin',
-        'x-univent-email': 'mallory@ves.ac.in',
-      },
-      requestContext: {
-        authorizer: {
-          claims: { sub: 'sub-5', email: 'asha@ves.ac.in' },
-        },
-      },
-    })
-
-    assert.equal(principal.role, ROLES.STUDENT)
-    assert.equal(principal.email, 'asha@ves.ac.in')
-    assert.equal(principal.source, 'authorizer-claims')
-  })
-
-  it('honours development headers only with explicit local opt-in', () => {
-    process.env.UNIVENT_DEV_AUTH = 'true'
-
-    const principal = resolvePrincipal(
-      devEvent({
-        'x-univent-role': 'admin',
-        'x-univent-email': 'admin@ves.ac.in',
-        'x-univent-name': 'Admin',
-      }),
-    )
-
-    assert.equal(principal.authenticated, true)
-    assert.equal(principal.role, ROLES.ADMIN)
-    assert.equal(principal.source, 'dev-header')
-  })
-
-  it('ignores development headers when dev auth is off', () => {
-    const principal = resolvePrincipal(
-      devEvent({ 'x-univent-role': 'admin', 'x-univent-email': 'admin@ves.ac.in' }),
-    )
+  it('ignores client-supplied identity headers without Cognito claims', () => {
+    const principal = resolvePrincipal(requestWithHeaders({
+      'x-univent-role': 'admin',
+      'x-univent-email': 'mallory@ves.ac.in',
+    }))
 
     assert.equal(principal.authenticated, false)
     assert.equal(principal.role, null)
   })
-
-  it('ignores development headers inside deployed Lambda', () => {
-    process.env.UNIVENT_DEV_AUTH = 'true'
-    process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs22.x'
-
-    const principal = resolvePrincipal(
-      devEvent({ 'x-univent-role': 'admin', 'x-univent-email': 'admin@ves.ac.in' }),
-    )
-
-    assert.equal(principal.authenticated, false)
-  })
-
-  it('allows development headers in SAM local', () => {
-    process.env.UNIVENT_DEV_AUTH = 'true'
-    process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs22.x'
-    process.env.AWS_SAM_LOCAL = 'true'
-
-    const principal = resolvePrincipal(
-      devEvent({ 'x-univent-role': 'organization', 'x-univent-email': 'codecell@ves.ac.in' }),
-    )
-
-    assert.equal(principal.authenticated, true)
-    assert.equal(principal.role, ROLES.ORGANIZATION)
-  })
 })
 
 describe('PreSignUp domain enforcement', () => {
+  function signUpHandler(clients = [{
+    ClientId: 'student-client',
+    ClientName: 'univent-web',
+  }]) {
+    const cognitoClient = {
+      async send(command) {
+        assert.equal(command.input.UserPoolId, 'pool-id')
+        return { UserPoolClients: clients }
+      },
+    }
+    return createHandler(cognitoClient)
+  }
+
   function signUpEvent(email, triggerSource = 'PreSignUp_SignUp') {
     return {
       triggerSource,
+      userPoolId: 'pool-id',
+      callerContext: { clientId: 'student-client' },
       request: { userAttributes: { email } },
       response: {},
     }
@@ -182,7 +134,7 @@ describe('PreSignUp domain enforcement', () => {
 
   it('accepts a ves.ac.in student self sign-up without auto-confirming', async () => {
     const event = signUpEvent('Asha.Sharma@VES.ac.in')
-    const result = await preSignUp(event)
+    const result = await signUpHandler()(event)
 
     assert.equal(result, event)
     assert.equal(result.response.autoConfirmUser, undefined)
@@ -191,32 +143,44 @@ describe('PreSignUp domain enforcement', () => {
 
   it('rejects a non-college email domain', async () => {
     await assert.rejects(
-      () => preSignUp(signUpEvent('asha@gmail.com')),
+      () => signUpHandler()(signUpEvent('asha@gmail.com')),
       /ves\.ac\.in/i,
     )
   })
 
   it('rejects lookalike and subdomain addresses', async () => {
-    await assert.rejects(() => preSignUp(signUpEvent('asha@ves.ac.in.evil.com')))
-    await assert.rejects(() => preSignUp(signUpEvent('asha@sub.ves.ac.in')))
+    await assert.rejects(() => signUpHandler()(signUpEvent('asha@ves.ac.in.evil.com')))
+    await assert.rejects(() => signUpHandler()(signUpEvent('asha@sub.ves.ac.in')))
   })
 
   it('rejects missing or malformed email attributes', async () => {
-    await assert.rejects(() => preSignUp(signUpEvent('')))
-    await assert.rejects(() => preSignUp(signUpEvent('asha')))
+    await assert.rejects(() => signUpHandler()(signUpEvent('')))
+    await assert.rejects(() => signUpHandler()(signUpEvent('asha')))
   })
 
   it('allows controlled admin-created accounts outside the student domain', async () => {
-    const event = signUpEvent('admin@univent.demo', 'PreSignUp_AdminCreateUser')
-    const result = await preSignUp(event)
+    const event = signUpEvent('admin@example.net', 'PreSignUp_AdminCreateUser')
+    const result = await signUpHandler()(event)
 
     assert.equal(result, event)
   })
 
   it('rejects unsupported external identity providers', async () => {
     await assert.rejects(
-      () => preSignUp(signUpEvent('asha@ves.ac.in', 'PreSignUp_ExternalProvider')),
+      () => signUpHandler()(signUpEvent('asha@ves.ac.in', 'PreSignUp_ExternalProvider')),
       /not available/i,
+    )
+  })
+
+  it('rejects self sign-up through the legacy organization app client', async () => {
+    const event = signUpEvent('codecell@ves.ac.in')
+    event.callerContext.clientId = 'organization-client'
+    await assert.rejects(
+      () => signUpHandler([
+        { ClientId: 'student-client', ClientName: 'univent-web' },
+        { ClientId: 'organization-client', ClientName: 'univent-organization-applicant' },
+      ])(event),
+      /administrator-approved/i,
     )
   })
 

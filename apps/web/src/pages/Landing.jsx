@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
 import EventCard from '../components/EventCard.jsx'
-import { listEvents } from '../services/api.js'
+import { sampleEvents } from '../services/sampleEvents.js'
+import { sampleOrganizations } from '../services/sampleOrganizations.js'
 import { sortByDate } from '../services/eventFilter.js'
-import { eventCategories as mockCategories } from '../services/eventCategories.js'
+import { eventCategories } from '../services/eventCategories.js'
 
 const STEPS = [
   { title: 'Discover an event', text: 'Browse workshops, hackathons, cultural events, talks, and competitions happening on campus.' },
@@ -131,26 +132,7 @@ function DashboardPreview({ spotlight, schedule }) {
 
 export default function Landing() {
   const { user } = useAuth()
-  const [events, setEvents] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    listEvents()
-      .then((data) => {
-        if (!cancelled) setEvents(sortByDate(data))
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || 'Could not load events.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const events = useMemo(() => sortByDate(sampleEvents), [])
 
   const featured = useMemo(() => {
     const hacks = events.filter((e) =>
@@ -165,7 +147,7 @@ export default function Landing() {
   const categoryCounts = useMemo(() => {
     const map = {}
     for (const e of events) map[e.category] = (map[e.category] || 0) + 1
-    return mockCategories.map((c) => ({ name: c, count: map[c] || 0 }))
+    return eventCategories.map((c) => ({ name: c, count: map[c] || 0 }))
   }, [events])
 
   return (
@@ -176,11 +158,11 @@ export default function Landing() {
           <span className="orb orb-b" />
           <span className="grid-overlay" />
         </div>
-        <div className="container hero-grid">
+        <div className="landing-shell hero-grid">
           <div className="hero-copy">
             <p className="eyebrow eyebrow-glow">
               <span className="eyebrow-dot" aria-hidden="true" />
-              {!loading && !error ? `${events.length} live events · Fall 2026` : 'Your campus, your community'}
+              {`${events.length} sample events · Fall 2026`}
             </p>
             <h1>
               Find your next <span className="grad-text">campus experience.</span>
@@ -200,11 +182,11 @@ export default function Landing() {
             <dl className="hero-stats" aria-live="polite">
               <div>
                 <dt>Upcoming</dt>
-                <dd>{loading ? '—' : `${events.length} events`}</dd>
+                <dd>{`${events.length} events`}</dd>
               </div>
               <div>
                 <dt>Categories</dt>
-                <dd>{mockCategories.length} tracks</dd>
+                <dd>{eventCategories.length} tracks</dd>
               </div>
               <div>
                 <dt>Checkout</dt>
@@ -213,16 +195,14 @@ export default function Landing() {
             </dl>
           </div>
           <div className="hero-preview">
-            {loading && <div className="skeleton skeleton-dash">Loading live preview…</div>}
-            {!loading && !error && events.length > 0 && (
+            {events.length > 0 && (
               <DashboardPreview spotlight={events[0]} schedule={events.slice(1, 3)} />
             )}
-            {!loading && error && <div className="alert alert-error" role="alert">{error}</div>}
           </div>
         </div>
       </section>
 
-      <div className="container landing-sections">
+      <div className="landing-shell landing-sections">
         <section aria-labelledby="featured-heading" className="landing-block">
           <div className="block-head">
             <div>
@@ -233,8 +213,7 @@ export default function Landing() {
             <Link className="link-more" to="/events?category=Technical">View all technical <ArrowIcon /></Link>
           </div>
           <div className="feat-grid">
-            {loading && <div className="skeleton">Loading featured…</div>}
-            {!loading && featured.map((e, i) => {
+            {featured.map((e, i) => {
               const s = formatShortDate(e.date)
               return (
                 <article className="feat-card" key={e.eventId}>
@@ -264,15 +243,13 @@ export default function Landing() {
             </div>
             <Link className="link-more" to="/events">Browse all events <ArrowIcon /></Link>
           </div>
-          {loading && <div className="skeleton">Loading events…</div>}
-          {!loading && !error && (
+          {events.length > 0 && (
             <div className="grid grid-3">
               {upcoming.map((e) => (
                 <EventCard key={e.eventId} event={e} />
               ))}
             </div>
           )}
-          {!loading && error && <div className="alert alert-error" role="alert">{error}</div>}
         </section>
 
         <section aria-labelledby="cats-heading" className="landing-block">
@@ -288,9 +265,27 @@ export default function Landing() {
               <Link key={c.name} className={`cat-card cat-${c.name.toLowerCase()}`} to={`/events?category=${encodeURIComponent(c.name)}`}>
                 <span className={`tile-dot tile-dot-${c.name.toLowerCase()}`} aria-hidden="true" />
                 <span className="cat-name">{c.name}</span>
-                <span className="cat-count">{loading ? '…' : `${c.count} event${c.count === 1 ? '' : 's'}`}</span>
+                <span className="cat-count">{`${c.count} event${c.count === 1 ? '' : 's'}`}</span>
                 <span className="cat-go">Explore <ArrowIcon /></span>
               </Link>
+            ))}
+          </div>
+        </section>
+
+        <section aria-labelledby="organizations-heading" className="landing-block">
+          <div className="block-head">
+            <div>
+              <p className="kicker">Campus organizations</p>
+              <h2 id="organizations-heading">Meet the communities behind campus events</h2>
+              <p className="block-sub">A static presentation preview, not an account directory or approval record.</p>
+            </div>
+          </div>
+          <div className="grid grid-3">
+            {sampleOrganizations.map((organization) => (
+              <article className="card" key={organization.id}>
+                <h3>{organization.name}</h3>
+                <p className="desc">{organization.description}</p>
+              </article>
             ))}
           </div>
         </section>
@@ -331,6 +326,10 @@ export default function Landing() {
             <Link className="btn btn-primary-grad btn-lg" to="/events">Explore Upcoming Events</Link>
             {!user && <Link className="btn btn-ghost btn-lg" to="/signup">Create Account</Link>}
           </div>
+          <p className="muted">
+            Organization: <Link to="/org/signup">apply separately</Link> or{' '}
+            <Link to="/org/signin">sign in</Link>. <Link to="/admin/signin">Admin login</Link>.
+          </p>
         </section>
       </div>
     </div>

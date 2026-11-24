@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { API_MODE, createEvent } from '../../services/api.js'
+import { createEvent } from '../../services/api.js'
 import { cleanEventInput, validateEventInput } from '../../services/eventValidation.js'
-import { eventCategories as mockCategories } from '../../services/eventCategories.js'
+import { eventCategories } from '../../services/eventCategories.js'
 
 const EMPTY = {
   title: '',
@@ -40,10 +40,7 @@ export default function AdminEventForm() {
     setSubmitting(true)
     try {
       const created = await createEvent(cleaned)
-      const persistence = API_MODE === 'mock'
-        ? 'created in this browser (demo — not saved to AWS)'
-        : 'saved to the backend API'
-      navigate('/admin/events', { state: { notice: `"${created.title}" was ${persistence}.` } })
+      navigate('/admin/events', { state: { notice: `"${created.title}" was saved to the backend API.` } })
     } catch (err) {
       if (err.fields) setFieldErrors(err.fields)
       setServerError(err.message || 'Could not create the event.')
@@ -55,10 +52,7 @@ export default function AdminEventForm() {
   return (
     <>
       <p className="muted org-sub">
-        Create a published event directly on the platform.{' '}
-        {API_MODE === 'mock'
-          ? 'Mock mode — the event is stored in this browser, not in AWS.'
-          : 'Live mode — the event is written through the backend API.'}
+        Create a published event directly on the platform. The event is written through the backend API.
       </p>
       {serverError && <div className="alert alert-error" role="alert">{serverError}</div>}
       <form className="form org-form" noValidate onSubmit={handleSubmit}>
@@ -76,7 +70,7 @@ export default function AdminEventForm() {
           <div className="field">
             <label htmlFor="admin-category">Category</label>
             <select id="admin-category" name="category" value={values.category} onChange={handleChange}>
-              {mockCategories.map((category) => (
+              {eventCategories.map((category) => (
                 <option key={category} value={category}>{category}</option>
               ))}
             </select>

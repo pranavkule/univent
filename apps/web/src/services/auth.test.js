@@ -4,10 +4,16 @@ import assert from 'node:assert/strict'
 import {
   isAllowedStudentEmail,
   validateConfirmationInput,
+  validateNewPasswordInput,
   validateSignInInput,
   validateSignUpInput,
 } from './authValidation.js'
-import { getDashboardPathForRole, roleFromGroups } from './authRoles.js'
+import {
+  ACCOUNT_TYPES,
+  accountTypeFromClaims,
+  getDashboardPathForRole,
+  roleFromGroups,
+} from './authRoles.js'
 
 describe('student auth validation', () => {
   it('accepts ves.ac.in student addresses', () => {
@@ -26,7 +32,7 @@ describe('student auth validation', () => {
     const valid = validateSignUpInput({
       name: 'Asha Sharma',
       email: 'asha@ves.ac.in',
-      password: 'Demo@123',
+      password: 'CampusPass1',
     })
     assert.deepEqual(valid, {})
 
@@ -50,15 +56,21 @@ describe('student auth validation', () => {
   })
 
   it('validates sign-in email and password presence', () => {
-    assert.deepEqual(validateSignInInput({ email: 'admin@univent.demo', password: 'x' }), {})
+    assert.deepEqual(validateSignInInput({ email: 'asha@ves.ac.in', password: 'x' }), {})
     assert.ok(validateSignInInput({ email: 'bad', password: '' }).email)
-    assert.ok(validateSignInInput({ email: 'admin@univent.demo', password: '' }).password)
+    assert.ok(validateSignInInput({ email: 'asha@ves.ac.in', password: '' }).password)
   })
 
   it('validates a six-digit confirmation code', () => {
     assert.deepEqual(validateConfirmationInput({ code: '123456' }), {})
     assert.ok(validateConfirmationInput({ code: '123' }).code)
     assert.ok(validateConfirmationInput({ code: 'abcdef' }).code)
+  })
+
+  it('validates the password entered after Cognito’s first-login challenge', () => {
+    assert.equal(validateNewPasswordInput('CampusPass1', 'CampusPass1'), '')
+    assert.match(validateNewPasswordInput('short', 'short'), /8 characters/)
+    assert.match(validateNewPasswordInput('CampusPass1', 'DifferentPass2'), /do not match/)
   })
 })
 
@@ -74,6 +86,19 @@ describe('Cognito role mapping', () => {
     assert.equal(getDashboardPathForRole('student'), '/dashboard')
     assert.equal(getDashboardPathForRole('organization'), '/org')
     assert.equal(getDashboardPathForRole('admin'), '/admin')
+  })
+
+  it('reads only recognized persisted account types from Cognito claims', () => {
+    assert.equal(
+      accountTypeFromClaims({ 'custom:account_type': 'ORGANIZATION_APPLICANT' }),
+      ACCOUNT_TYPES.ORGANIZATION_APPLICANT,
+    )
+    assert.equal(
+      accountTypeFromClaims({ 'custom:account_type': 'STUDENT' }),
+      ACCOUNT_TYPES.STUDENT,
+    )
+    assert.equal(accountTypeFromClaims({ 'custom:account_type': 'ADMIN' }), null)
+    assert.equal(accountTypeFromClaims({}), null)
   })
 
   it('sends unknown roles to the public events list instead of looping', () => {

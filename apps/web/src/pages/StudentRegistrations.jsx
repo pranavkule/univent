@@ -1,25 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../components/AuthProvider.jsx'
-import { API_MODE, cancelRegistration, listEvents, listRegistrations } from '../services/api.js'
+import { listEvents, listRegistrations } from '../services/api.js'
 
 // My Registrations: the signed-in student's own registrations only.
-// Cancellation is allowed for upcoming events and always asks first; it is
-// available only in mock mode because the live API has no cancel endpoint.
-function isUpcoming(date) {
-  if (!date) return true
-  return date >= new Date().toISOString().slice(0, 10)
-}
-
 export default function StudentRegistrations() {
   const { user } = useAuth()
   const [events, setEvents] = useState([])
   const [registrations, setRegistrations] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState(null)
   const [statusFilter, setStatusFilter] = useState('All')
-  const [cancelling, setCancelling] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -57,23 +48,6 @@ export default function StudentRegistrations() {
 
   const eventById = (eventId) => events.find((e) => e.eventId === eventId)
 
-  async function handleCancel(registration) {
-    const evt = eventById(registration.eventId)
-    const label = evt ? `"${evt.title}"` : registration.registrationId
-    if (!window.confirm(`Cancel your registration for ${label}? This cannot be undone.`)) return
-    setCancelling(registration.registrationId)
-    setNotice(null)
-    try {
-      await cancelRegistration(registration.registrationId)
-      setRegistrations((regs) => regs.filter((r) => r.registrationId !== registration.registrationId))
-      setNotice({ type: 'ok', text: 'Registration cancelled. Demo only — removed from this browser, not in AWS.' })
-    } catch (err) {
-      setNotice({ type: 'error', text: err.message || 'Could not cancel the registration.' })
-    } finally {
-      setCancelling(null)
-    }
-  }
-
   if (loading) {
     return (
       <div className="container">
@@ -98,14 +72,6 @@ export default function StudentRegistrations() {
       <p className="muted">
         Signed in as {user?.name} ({user?.email}).
       </p>
-      {notice && (
-        <div
-          className={`alert alert-${notice.type === 'error' ? 'error' : 'ok'}`}
-          role={notice.type === 'error' ? 'alert' : 'status'}
-        >
-          {notice.text}
-        </div>
-      )}
       {mine.length === 0 ? (
         <div className="alert alert-empty">
           You have not registered for any event yet.
@@ -131,34 +97,17 @@ export default function StudentRegistrations() {
             <div className="org-table-wrap">
               <table className="reg-table">
                 <thead>
-                  <tr><th>Registration ID</th><th>Event</th><th>Date</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr>
+                  <tr><th>Registration ID</th><th>Event</th><th>Date</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   {filtered.map((r) => {
                     const evt = eventById(r.eventId)
-                    const allowed = isUpcoming(evt?.date)
                     return (
                       <tr key={r.registrationId}>
                         <td>{r.registrationId}</td>
                         <td>{evt ? <Link to={`/events/${evt.eventId}`}>{evt.title}</Link> : r.eventId}</td>
                         <td>{evt?.date || '—'}</td>
                         <td><span className="badge badge-ok">{r.status || 'Confirmed'}</span></td>
-                        <td className="org-actions">
-                          {API_MODE !== 'mock' ? (
-                            <span className="muted">Not available</span>
-                          ) : allowed ? (
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              disabled={cancelling === r.registrationId}
-                              onClick={() => handleCancel(r)}
-                            >
-                              {cancelling === r.registrationId ? 'Cancelling…' : 'Cancel'}
-                            </button>
-                          ) : (
-                            <span className="muted">Completed</span>
-                          )}
-                        </td>
                       </tr>
                     )
                   })}

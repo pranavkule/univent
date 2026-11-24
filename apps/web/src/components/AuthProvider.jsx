@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
-  AUTH_MODE,
   confirmSignUp as authConfirmSignUp,
+  completeNewPassword as authCompleteNewPassword,
   resendConfirmationCode as authResendCode,
   restoreSession,
   signIn as authSignIn,
@@ -33,14 +33,17 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const signUp = useCallback(async (input) => {
-    const result = await authSignUp(input)
-    if (result.user) setUser(result.user)
-    return result
-  }, [])
+  const signUp = useCallback((input) => authSignUp(input), [])
 
   const signIn = useCallback(async (input) => {
     const session = await authSignIn(input)
+    if (session?.requiresPasswordChange) return session
+    setUser(session)
+    return session
+  }, [])
+
+  const completeNewPassword = useCallback(async (password) => {
+    const session = await authCompleteNewPassword(password)
     setUser(session)
     return session
   }, [])
@@ -59,15 +62,24 @@ export function AuthProvider({ children }) {
   const value = useMemo(
     () => ({
       user,
-      authMode: AUTH_MODE,
       loading,
       signUp,
       signIn,
+      completeNewPassword,
       signOut,
       confirmSignUp,
       resendConfirmationCode,
     }),
-    [user, loading, signUp, signIn, signOut, confirmSignUp, resendConfirmationCode],
+    [
+      user,
+      loading,
+      signUp,
+      signIn,
+      completeNewPassword,
+      signOut,
+      confirmSignUp,
+      resendConfirmationCode,
+    ],
   )
 
   if (loading) {

@@ -1,14 +1,14 @@
 # Architecture
 
-Beginner-friendly overview of UniVent. No code here — just the plan.
+Beginner-friendly overview of UniVent's architecture and implementation.
 
 ## Scope
 - Public: list events, view one event.
 - Students (`@ves.ac.in` only): sign up with email confirmation, sign in,
   register for an event, see confirmation and their own registrations.
-- Organizations: self-register with an official college email, confirm it,
-  apply for approval, then manage their own events and registrations after
-  Admin approval.
+- Organizations: apply with their official college email and a separately
+  selected password; an Admin approves before a distinct Cognito account is
+  provisioned.
 - Admins: privately provisioned; review organization applications, manage
   platform events, and view registrations.
 - Out of scope for now: payments, registration notifications, multi-college
@@ -19,8 +19,10 @@ Beginner-friendly overview of UniVent. No code here — just the plan.
 - **API Gateway** — single API front door for the backend; routes to Lambdas; checks Cognito ID tokens on protected routes.
 - **Lambda** — focused API handlers, organization application/approval logic,
   and the Cognito `preSignUp` trigger.
-- **DynamoDB** — `Events`, `Registrations`, and
-  `OrganizationApplications` tables. Serverless NoSQL, pay per request.
+- **DynamoDB** — event, registration, organization application, duplicate-lock,
+  and encrypted-password tables. Serverless NoSQL, pay per request.
+- **KMS** — encrypts the short-lived organization password secret until
+  approval or rejection.
 - **Cognito** — User Pool for email sign-up/sign-in; exact `@ves.ac.in` public
   sign-up; Admins grant the `organizations` group only after approval;
   frontend sends the ID token, API Gateway verifies it.
@@ -30,8 +32,8 @@ Beginner-friendly overview of UniVent. No code here — just the plan.
 ```
 Browser (S3)
   → API Gateway (route + optional auth check)
-    → Lambda (validate input → DynamoDB read/write; Admin decisions also update
-      Cognito group membership)
+    → Lambda (validate input → DynamoDB read/write; Admin decisions provision
+        the separate account and update Cognito group membership)
       → JSON response back to browser
 ```
 Example: Register button → `POST /register` with `Authorization: Bearer
@@ -39,24 +41,27 @@ Example: Register button → `POST /register` with `Authorization: Bearer
 student role and email claim → writes to `Registrations` table → returns
 confirmation JSON.
 
-## Authentication flow (Phase 5)
+## Student authentication flow (Phase 5)
 ```
-Sign-up form (@ves.ac.in)
+Student sign-up form (@ves.ac.in)
   → Cognito User Pool → PreSignUp Lambda exact-domain check
     → email code → /confirm-signup → sign-in
       → ID token + refresh token in the Cognito SDK
         → API Gateway CognitoAuthorizer on protected routes
           → Lambda reads email / sub / cognito:groups
 ```
-- Email-code confirmation is required; the PreSignUp trigger does not
+- Student email-code confirmation is required; the PreSignUp trigger does not
   auto-confirm.
 - `admins` group → admin, otherwise `organizations` group → organization,
   otherwise student. Admin wins if both groups are present.
 - Lambda re-checks roles for defense in depth; frontend route guards are not
   authorization.
-- Organization registration confirms the official college email before the
-  applicant submits details. The backend stores one application per trusted
-  Cognito `sub`; only Admins can list or decide applications.
+- Organization applications use the official organization email, contact
+  details, and a separately selected password. Submission creates no Cognito
+  account and does not send an email OTP. The password is encrypted separately
+  and expires after 30 days. Admin approval provisions a distinct account with
+  email delivery suppressed and sets the submitted password; rejection
+  preserves history and deletes the secret.
 - Organization event-management and registration-view requests require both
   the `organizations` group claim and a persisted `APPROVED` application.
   Rejected/suspended records deny access even when a token still has a stale
@@ -68,10 +73,11 @@ Sign-up form (@ves.ac.in)
 - `Registrations` table: partition key `eventId`, sort key `email` (one
   registration per account per event). GSI `OwnerEmailIndex`
   (`ownerEmail` + `eventId`) serves a signed-in user's registration list.
-- `OrganizationApplications` table: partition key `userSub`, with application
-  details and `PENDING`, `APPROVED`, `REJECTED`, or `SUSPENDED` state. No GSI
-  is needed for the current small Admin review list; it currently scans this
-  table.
+- The existing `OrganizationApplications` table remains keyed by `userSub`
+  for legacy history. New applications use a UUID-keyed table with a
+  `CognitoSubIndex`; a separate lock table prevents duplicate official-email
+  submissions transactionally. Password ciphertext is stored in its own
+  TTL-backed table.
 - Registration is one `TransactWriteItems` call: increment the event counter
   with a conditional capacity check and insert the registration. A conditional
   failure maps to duplicate, full, not-ready, or missing-event responses.
