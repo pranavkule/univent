@@ -11,7 +11,7 @@ export default function Footer() {
           </Link>
           <p className="muted">
             A cloud computing mini-project for college event discovery and
-            registration — React frontend, planned serverless AWS backend.
+            registration, powered by a serverless AWS backend.
           </p>
         </div>
         <nav aria-label="Footer">
@@ -31,7 +31,7 @@ export default function Footer() {
         </nav>
       </div>
       <div className="container">
-        <p className="mock-note">Phase 2 prototype — mock data and mock sign-in in this browser only. No backend, no real accounts.</p>
+        <p className="footer-note">Discover campus events and manage registrations with UniVent.</p>
       </div>
     </footer>
   )

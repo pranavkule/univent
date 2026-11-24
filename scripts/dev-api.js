@@ -1,28 +1,13 @@
 #!/usr/bin/env node
-// Local development API server (not a deployment artifact).
-//
-// `sam local start-api` needs the SAM CLI and a running Docker daemon. This
-// script mounts the same four routes on a plain Node HTTP server so the
-// endpoints can be exercised with curl during development and demos.
-//
-//   node scripts/dev-api.js            # http://localhost:3000
-//   PORT=4000 node scripts/dev-api.js
-//
-// The identity headers below are the local development ones; they only work
-// when UNIVENT_DEV_AUTH=true and never inside AWS Lambda.
+// Local public events endpoint for development (not a deployment artifact).
+// Protected routes require API Gateway's Cognito authorizer.
 const http = require('node:http')
 const { URL } = require('node:url')
 
 const getEvents = require('../backend/functions/getEvents')
-const createEvent = require('../backend/functions/createEvent')
-const register = require('../backend/functions/register')
-const getRegistrations = require('../backend/functions/getRegistrations')
 
 const ROUTES = {
   'GET /events': getEvents.handler,
-  'POST /events': createEvent.handler,
-  'POST /register': register.handler,
-  'GET /registrations': getRegistrations.handler,
 }
 
 const PORT = Number(process.env.PORT || 3000)
@@ -31,8 +16,8 @@ const MAX_BODY_LENGTH = 100000
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': process.env.CORS_ORIGIN || '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Univent-Role,X-Univent-Email,X-Univent-Name,X-Univent-Sub',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'GET,OPTIONS',
   }
 }
 
@@ -110,10 +95,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`UniVent local API listening on http://localhost:${PORT}`)
-  console.log('Routes: GET /events | POST /events | POST /register | GET /registrations')
-  console.log(`Development identity headers: ${process.env.UNIVENT_DEV_AUTH === 'true' ? 'ENABLED' : 'disabled'}`)
-  console.log('Try: curl -H "x-univent-role: admin" -H "x-univent-email: admin@univent.demo" \\')
-  console.log('       -H "Content-Type: application/json" \\')
-  console.log('       -d \'{"title":"Hack Night","date":"2026-11-02","venue":"Seminar Hall A"}\' \\')
-  console.log(`       http://localhost:${PORT}/events`)
+  console.log('Public route: GET /events')
+  console.log('Protected routes require API Gateway with a Cognito authorizer.')
 })

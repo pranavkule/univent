@@ -14,6 +14,9 @@ in the current template have not been deployed or live-tested.
 | `EVENTS_TABLE` | Events table name |
 | `REGISTRATIONS_TABLE` | Registrations table name |
 | `ORGANIZATION_APPLICATIONS_TABLE` | Organization applications and approval-state table |
+| `PUBLIC_ORGANIZATION_APPLICATIONS_TABLE` | UUID-keyed admin-assisted applications |
+| `ORGANIZATION_APPLICATION_LOCKS_TABLE` | Conditional duplicate-application locks |
+| `ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX` | Approved applicant lookup GSI |
 | `REGISTRATIONS_OWNER_INDEX` | GSI name, default `OwnerEmailIndex` |
 | `EVENTS_OWNER_INDEX` | Organization event GSI, default `OrganizationOwnerIndex` |
 | `DYNAMODB_ENDPOINT` | Optional local endpoint, e.g. `http://127.0.0.1:8000` |
@@ -44,17 +47,22 @@ with the same `await` expressions.
 - The composite key enforces one registration per account per event.
 
 ### OrganizationApplications
-- Partition key: `userSub` (string), sourced from the authenticated Cognito
-  claim; the browser cannot choose it.
-- Attributes include organization and representative details, verified
-  official email, status (`PENDING`, `APPROVED`, `REJECTED`, or `SUSPENDED`),
-  application/decision timestamps, Admin `decidedBy`, and an optional
-  rejection reason.
-- A conditional `PutItem` prevents multiple applications for one Cognito
-  account. Status updates use conditional writes to prevent conflicting
-  concurrent decisions.
-- No GSI is defined. The Admin list endpoint scans this table; add pagination
-  or an index before the application volume makes scans unsuitable.
+- The existing table remains keyed by `userSub` for legacy application
+  history; the new workflow does not modify or replace it.
+
+### PublicOrganizationApplications
+- Partition key: `applicationId` (UUID); application data includes the
+  accessible applicant email, organization details, workflow status, timestamps,
+  Cognito `sub` after provisioning, and Admin audit history.
+- GSI `CognitoSubIndex` links approved application rows to the provisioned
+  Cognito account for organization authorization checks.
+- `OrganizationApplicationLocks` is keyed by a SHA-256 digest of normalized
+  applicant email and organization name. A DynamoDB transaction creates or
+  changes the lock and application record together, preventing duplicate
+  pending applications under concurrent submissions.
+- Status changes condition on the expected previous status and append an
+  audit record in the same transaction. Admin listing currently scans both
+  history tables and should be paginated before volume grows.
 
 ### Access patterns
 | Need | Access |

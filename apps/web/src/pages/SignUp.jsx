@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthProvider.jsx'
 import { validateSignUpInput } from '../services/auth.js'
 
 export default function SignUp() {
-  const { signUp, authMode } = useAuth()
+  const { signUp } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const explicitFrom = location.state?.from
@@ -48,9 +48,7 @@ export default function SignUp() {
     <div className="container container-narrow">
       <h2>Create your account</h2>
       <p className="muted">
-        {authMode === 'mock'
-          ? 'Mock sign-up for the prototype — no real account is created.'
-          : 'Student accounts use your @ves.ac.in email. We will send a confirmation code.'}
+        Student accounts use your @ves.ac.in email. We will send a confirmation code.
       </p>
       <form className="form" onSubmit={handleSubmit} noValidate>
         <div className="field">
@@ -92,7 +90,7 @@ export default function SignUp() {
         Already have an account? <Link to="/signin" state={{ from }}>Sign in</Link>
       </p>
       <p className="muted">
-        Organization representative? <Link to="/org/signup">Create an account and apply</Link>.
+        Organization representative? <Link to="/org/signup">Apply for organization access</Link>.
       </p>
     </div>
   )

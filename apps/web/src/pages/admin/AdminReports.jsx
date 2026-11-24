@@ -1,24 +1,20 @@
 import { useEffect, useState } from 'react'
-import OrgStatusBadge from '../../components/OrgStatusBadge.jsx'
-import { getEventStatusDistribution, getRegistrationsByEvent, listRecentActivity } from '../../services/admin.js'
+import { getRegistrationsByEvent, listRecentActivity } from '../../services/admin.js'
 
-// Reports & Activity: platform summaries computed from available mock
-// records. The mock backend has no audit-log API, so administrative actions
-// themselves are not logged — that gap is stated, not fabricated.
+// Reports & Activity are derived from API records. The API has no audit-log
+// endpoint, so administrative actions themselves are not recorded.
 export default function AdminReports() {
   const [byEvent, setByEvent] = useState([])
-  const [dist, setDist] = useState([])
   const [activity, setActivity] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([getRegistrationsByEvent(), getEventStatusDistribution(), listRecentActivity(20)])
-      .then(([rows, distribution, feed]) => {
+    Promise.all([getRegistrationsByEvent(), listRecentActivity(20)])
+      .then(([rows, feed]) => {
         if (cancelled) return
         setByEvent(rows)
-        setDist(distribution)
         setActivity(feed)
       })
       .catch((err) => {
@@ -40,7 +36,7 @@ export default function AdminReports() {
   return (
     <>
       <p className="muted org-sub">
-        Summaries from mock records only — not production analytics.
+        Summaries derived from events and registrations available through the API.
       </p>
 
       <section aria-labelledby="reports-by-event" className="org-section">
@@ -48,7 +44,7 @@ export default function AdminReports() {
           <h3 id="reports-by-event">Registrations by event ({totalRegs} total)</h3>
         </div>
         {byEvent.length === 0 ? (
-          <div className="alert alert-empty">No registrations in the mock records yet.</div>
+          <div className="alert alert-empty">No registrations are available from the API.</div>
         ) : (
           <div className="org-table-wrap">
             <table className="reg-table">
@@ -68,39 +64,14 @@ export default function AdminReports() {
         )}
       </section>
 
-      <section aria-labelledby="reports-status" className="org-section">
-        <div className="org-section-head">
-          <h3 id="reports-status">Event status distribution</h3>
-        </div>
-        {dist.length === 0 ? (
-          <div className="alert alert-empty">No events in the mock records yet.</div>
-        ) : (
-          <div className="org-table-wrap">
-            <table className="reg-table">
-              <thead>
-                <tr><th>Status</th><th>Events</th></tr>
-              </thead>
-              <tbody>
-                {dist.map((d) => (
-                  <tr key={d.status}>
-                    <td><OrgStatusBadge status={d.status} /></td>
-                    <td>{d.count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       <section aria-labelledby="reports-activity" className="org-section">
         <div className="org-section-head">
           <h3 id="reports-activity">Activity log</h3>
         </div>
         <div className="alert alert-empty">
-          Audit logging is not available in the mock backend, so administrative
-          actions are not recorded. Below is recent platform activity derived
-          from mock registration and event records.
+          The API does not provide an audit log, so administrative actions are
+          not recorded. The activity below is derived from registration and
+          event records.
         </div>
         {activity.length > 0 && (
           <div className="org-table-wrap">

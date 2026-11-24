@@ -1,44 +1,54 @@
 # Phase 5 — Cognito Authentication
 
-Goal: students can create and confirm an account, sign in with Cognito, and the
-API enforces the approved role matrix.
+Goal: preserve independent student and administrator sign-in while provisioning
+organization accounts only after approval.
 
-## Implemented
+## Cognito configuration
 
-### Infrastructure
-- `AWS::Cognito::UserPool` with email as the case-insensitive username.
-- Email is the only auto-verified attribute; MFA is off for this project.
-- Password policy: at least 8 characters with uppercase, lowercase, and a
-  number. Symbols are optional to match the Cognito template policy.
-- Student and organization-applicant `AWS::Cognito::UserPoolClient`s: public
-  clients (no secret), SRP and refresh flows, no hosted UI. The applicant
-  client is used only by `/org/signup`. Access/ID tokens last 60 minutes;
-  refresh token 7 days.
-- The mutable `custom:account_type` attribute is readable by app clients but
-  not writable by users. `PostConfirmation` assigns `STUDENT` or
-  `ORGANIZATION_APPLICANT` based on Cognito's trusted signup client context.
-- Groups: `admins` and `organizations`. No privileged group means `student`.
-- `preSignUp.js` is wired as the PreSignUp trigger:
-  - allows public student and organization-representative self sign-up only
-    for an exact `@ves.ac.in` address;
-  - allows admin-created accounts outside the student domain;
-  - rejects external identity providers;
-  - does **not** auto-confirm or auto-verify email.
-- Self-sign-up never adds a Cognito group. A newly registered user is not an
-  organization until an Admin approves a persisted application.
-- API Gateway `CognitoAuthorizer` protects:
-  - `POST /events`, `GET /organization/events`, and `PUT /events/{eventId}`
-  - `POST /register`
-  - `GET /registrations`
-  - `GET /organization-applications`, `POST /organization-applications`, and
-    `PATCH /admin/organization-applications/{userSub}`
-- `GET /events` remains public.
-- Gateway `401`/`403` responses include CORS headers so the browser can read
-  auth failures.
-- Stack outputs: `UserPoolId`, `UserPoolClientId`,
-  `OrganizationApplicantUserPoolClientId`, `CognitoRegion`.
+- The existing User Pool uses email usernames and keeps the existing
+  `admins` and `organizations` groups. The workflow does not create another
+  pool or change existing users.
+- Student self-sign-up is allowed only through the student app client and for
+  an exact `@ves.ac.in` address. The `PreSignUp` trigger does not auto-confirm
+  or auto-verify student email; the existing Cognito email-code flow remains.
+- The legacy organization-applicant app client remains in the template for
+  compatibility, but the `PreSignUp` trigger rejects new self-sign-up through
+  it. New organization applications do not use Cognito email OTP.
+- `PostConfirmation` is a no-op. Backend authorization relies on verified
+  Cognito group claims and the persisted organization application, not a
+  client-supplied role or a custom account-type attribute.
+- The template's custom organization attribute is named `org_application_id`
+  (within Cognito's 20-character limit). New account authorization uses a
+  server-owned `preferred_username` application marker and persisted record
+  binding; the flow does not depend on adding a custom attribute to the
+  deployed pool.
+- Student and organization sign-in use separate UI routes and accounts.
+  Students continue using their personal email; organizations use their
+  official organization email and a separately selected password.
 
-### Backend authorization
+## Organization approval and provisioning
+
+- `/org/signup` stores an application in `PENDING_APPROVAL`. It validates the
+  official email and password, but does not create a Cognito user.
+- The password is encrypted by KMS and stored separately from application
+  history in a TTL-enabled table for up to 30 days. It is removed after
+  approval or rejection. Plaintext passwords are not stored in DynamoDB or
+  application logs.
+- Admin approval provisions a distinct account in the existing pool using
+  the official email. Cognito email delivery is suppressed and the submitted
+  password is set as permanent, so access to the shared inbox is not required.
+  Approval then records the Cognito `sub`, adds the account to `organizations`,
+  and enables it.
+- Approval is idempotent and only reuses an account whose server-owned
+  application marker matches the same application. Failed approval retries
+  leave the user disabled until the application is saved and access is
+  granted. Rejection preserves application history and removes the secret.
+- Pending and rejected applications have no usable organization account.
+  Legacy application records cannot grant organization access through this
+  flow.
+
+## Backend authorization
+
 | Action | Student | Organization | Admin |
 | ------ | ------- | ------------ | ----- |
 | `GET /events` | Yes | Yes | Yes |
@@ -47,143 +57,27 @@ API enforces the approved role matrix.
 | `POST /events` | `403` | Approved application + group only | Yes |
 | `GET /organization/events` | `403` | Approved application + group; own only | All events |
 | `PUT /events/{eventId}` | `403` | Approved application + group; own event only | Any event |
-| Application submission | `403` unless persisted account type is `ORGANIZATION_APPLICANT` | Own verified account | `403` |
-| Application list/decision | Own application only | Own application only | All / decide |
+| Application submission | Public | Public | Public |
+| Application read | No login until approved | Own application only | All |
+| Application decision | `403` | `403` | Yes |
 
-Identity comes from trusted authorizer claims, never body fields. The Lambda
-re-checks the role and persisted application status even though the frontend
-also gates workspaces. Organization event ownership is the trusted Cognito
-`sub`; an `ownerSub` match is required for event edits and registration reads.
-Phase 4 transactions, counters, and owner-scoped queries are unchanged.
+Identity and ownership come from trusted Cognito claims, never request-body
+fields. Every organization API call also checks that the Cognito `sub` is
+bound to a non-legacy application with persisted `APPROVED` status; a group
+claim alone is insufficient. Event ownership is the organization's Cognito
+`sub`, so one organization cannot manage another organization's events or
+registrations.
 
-### Organization application and approval workflow
-- `/signup` creates a `STUDENT` account; `/org/signup` uses the separate
-  applicant app client and creates an `ORGANIZATION_APPLICANT` account after
-  email confirmation. The user must sign in before submitting organization
-  name, representative role, and phone at `/org/apply`.
-- The PostConfirmation Lambda assigns the account type server-side; app
-  clients cannot write the custom attribute. `POST
-  /organization-applications` reads the persisted Cognito attribute and
-  rejects non-applicants with HTTP 403. The account type does not grant
-  organization privileges.
-- `POST /organization-applications` requires the Cognito email to be verified
-  and match the submitted official email, and checks the configured exact
-  college domain. The handler takes `userSub` only from the authorizer claim.
-- `OrganizationApplicationsTable` stores one application per `userSub` with
-  `PENDING`, `APPROVED`, `REJECTED`, or `SUSPENDED` state. Conditional writes
-  prevent duplicate submissions and conflicting decisions.
-- Admins review applications in the live Admin Organizations screen. Only an
-  Admin can list all applications and call the decision API. Approval adds
-  the `organizations` Cognito group; rejection/suspension removes it.
-- Each organization event-management/registration request checks both the
-  group claim and a consistent read of the saved `APPROVED` application.
-  Rejected/suspended accounts therefore fail closed even if an ID token still
-  contains an old group claim. Users must refresh their session/sign in again
-  for the frontend to display the new group role.
-- Existing group-only organization users have no approval record and cannot
-  use organization APIs. They must submit an application and be approved;
-  no bulk data migration or group-only bypass is provided.
-- Existing Cognito accounts are not automatically classified. Only accounts
-  confirmed through a recognized app client after deployment receive the
-  corresponding account type. Backfill an existing account only after its
-  original signup route is reliably verified; approved organizations retain
-  access through their existing group and approval record.
+## Infrastructure and verification
 
-### Frontend
-- `VITE_AUTH_MODE=mock` preserves the browser-local demo accounts.
-- `VITE_AUTH_MODE=cognito` uses `amazon-cognito-identity-js`; production
-  defaults to Cognito and fails closed when pool/client/region config is
-  missing.
-- Configure `VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID` from the
-  `OrganizationApplicantUserPoolClientId` stack output for `/org/signup`.
-- Sign-up validates `@ves.ac.in` before calling Cognito, then routes to
-  `/confirm-signup` when a code is required.
-- `/confirm-signup` enters/resends the email code and then sends the user to
-  sign-in with the email prefilled.
-- `AuthProvider` restores a Cognito session asynchronously, exposes loading,
-  role, sign-up/confirm/sign-in/sign-out, and attaches the ID token through
-  `getAuthHeaders()` for Phase 6.
-- Student-only routes are role-gated; existing organization/admin workspaces
-  keep their gates.
-
-### Provisioning
-Run privileged accounts only through the operator script:
-
-```bash
-export COGNITO_USER_POOL_ID=<pool-id>
-export AWS_REGION=<region>
-export UNIVENT_PROVISION_PASSWORD='<strong-initial-password>'
-node scripts/provision-cognito-user.js \
-  --email admin@ves.ac.in \
-  --name 'UniVent Admin' \
-  --role admin
-```
-
-- Use the script only for private Admin accounts. Organization representatives
-  self-register at `/org/signup` and become privileged only after approval.
-- The script's `organization` option is not an approval path; group membership
-  alone does not authorize organization APIs without an `APPROVED` application.
-- Student self sign-up remains available. Public sign-up never grants either
-  privileged group.
-- Existing users require `--update-existing`; conflicting privileged groups are
-  refused instead of being silently replaced.
-- The environment password is set as the user's permanent password, not a
-  temporary password. If a previous run created the account but failed before
-  setting it, rerun with `--update-existing` and the same env var to repair the
-  `FORCE_CHANGE_PASSWORD` state.
-- Passwords come from the environment and are never logged or accepted on the
-  command line.
-
-## Local checks
-- `npm --prefix backend test`
-- `npm --prefix apps/web test`
-- `npm --prefix apps/web run build`
-- `sam validate --lint --template-file infrastructure/template.yaml`
-- `sam build --template-file infrastructure/template.yaml --build-dir <short-path>`
-- When deploying with a supplied Lambda role, grant it
-  `cognito-idp:ListUserPoolClients` and
-  `cognito-idp:AdminUpdateUserAttributes` for PostConfirmation, plus
-  `cognito-idp:AdminGetUser` for organization-application authorization.
-
-## Deployment-dependent checks
-These need a real Cognito pool and API Gateway stage:
-- confirmation email delivery and code entry;
-- rejection of non-`ves.ac.in` self sign-up at the Cognito trigger;
-- applying as an organization, Admin review, group assignment, and the
-  approved organization seeing its role after session refresh;
-- checking that pending/rejected/suspended applications are denied on
-  organization endpoints, including with a stale organization group claim;
-- missing/expired token → `401`;
-- student calling admin/org action → `403`;
-- CORS headers on authorizer failures;
-- token refresh after the 60-minute ID-token lifetime.
-
-## Security notes
-- `amazon-cognito-identity-js` stores tokens in browser storage, so XSS can
-  steal a session. Serve only the known app bundle over HTTPS and avoid
-  untrusted third-party scripts. HttpOnly-cookie sessions would be a later
-  hardening step.
-- The ID token is sent only to the API; never put it in URLs or logs.
-- Admin accounts are provisioned out of band. Organization representatives
-  self-register at the organization signup route, but public sign-up cannot
-  grant a privileged group and approval is required for organization features.
-- Group changes do not rewrite an already-issued ID token. The API sees the new
-  group only after the SDK refreshes the token, up to the 60-minute ID-token
-  lifetime. Every organization data request also checks the persisted
-  application status, so a stale organization group claim cannot retain access
-  after rejection or suspension. Sign out/in (or reload after refresh) to
-  update the UI role and workspace menu sooner.
-
-The Admin decision Lambda requires
-`cognito-idp:AdminAddUserToGroup` and
-`cognito-idp:AdminRemoveUserFromGroup` on the configured User Pool. AWS Academy
-Learner Lab permission for these operations is account-specific and must be
-verified before deployment; it has not been verified by local tests.
-
-## Out of scope
-- Shared organization identity across multiple representatives; ownership is
-  per Cognito `sub`.
-- Organization application list pagination/indexing; the Admin API currently
-  scans the small applications table.
-- MFA, password reset UI, global sign-out, and custom email branding.
-- Hosted UI/callback URLs.
+- The Cognito groups and existing User Pool are retained. The template's
+  `PreSignUp` function uses read-only `ListUserPoolClients` permission to
+  identify the configured student client; organization provisioning uses
+  backend-only Cognito administrative APIs.
+- The organization-application Lambda receives scoped DynamoDB, KMS, and
+  Cognito permissions when the template creates per-function roles. An
+  externally supplied execution role must provide the corresponding actions.
+- Unit tests cover student sign-up routing, separate organization provisioning,
+  approval/rejection behavior, and organization ownership boundaries.
+- Do not deploy from this phase. Review the current CloudFormation change set
+  and existing pool configuration before any in-place update.

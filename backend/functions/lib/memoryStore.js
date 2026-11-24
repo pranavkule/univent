@@ -4,13 +4,17 @@
 // memory, so data is lost on restart and is not shared between instances.
 // DynamoDB storage (lib/dynamoStore.js) is selected in the deployed template
 // through UNIVENT_STORE=dynamodb and implements the same interface.
+const { randomUUID } = require('node:crypto')
 const { makeId } = require('./ids')
+const { duplicateKeyForApplication } = require('./organizationApplicationIdentity')
 const { seedEvents } = require('./seedEvents')
 const { CODES, StoreError } = require('./storeError')
 
 const events = new Map()
 const registrations = new Map()
 const organizationApplications = new Map()
+const publicOrganizationApplications = new Map()
+const organizationApplicationLocks = new Map()
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase()
@@ -20,6 +24,8 @@ function seed() {
   events.clear()
   registrations.clear()
   organizationApplications.clear()
+  publicOrganizationApplications.clear()
+  organizationApplicationLocks.clear()
   for (const event of seedEvents) {
     events.set(event.eventId, {
       ...event,
@@ -139,11 +145,27 @@ function createRegistration({ eventId, name, email, userId = null }) {
 
 function getOrganizationApplication(userSub) {
   const application = organizationApplications.get(userSub)
-  return application ? { ...application } : null
+  if (application) return { ...application, isLegacy: true, applicationId: application.userSub }
+  const linked = Array.from(publicOrganizationApplications.values())
+    .filter((item) => item.cognitoSub === userSub)
+    .sort((left, right) => {
+      if (left.status === 'APPROVED' && right.status !== 'APPROVED') return -1
+      if (right.status === 'APPROVED' && left.status !== 'APPROVED') return 1
+      return String(right.appliedAt).localeCompare(String(left.appliedAt))
+    })
+  return linked.length ? { ...linked[0] } : null
 }
 
 function listOrganizationApplications() {
-  return Array.from(organizationApplications.values())
+  const legacy = Array.from(organizationApplications.values())
+    .map((application) => ({
+      ...application,
+      isLegacy: true,
+      applicationId: application.userSub,
+      applicantEmail: application.officialEmail,
+    }))
+  const current = Array.from(publicOrganizationApplications.values())
+  return [...legacy, ...current]
     .sort((left, right) => String(left.appliedAt).localeCompare(String(right.appliedAt)))
     .map((application) => ({ ...application }))
 }
@@ -210,6 +232,80 @@ function updateOrganizationApplicationStatus(
   return { ...updated }
 }
 
+function createPendingOrganizationApplication(values, { passwordExpiresAt } = {}) {
+  const duplicateKey = duplicateKeyForApplication(values)
+  const lock = organizationApplicationLocks.get(duplicateKey)
+  if (lock && lock.status !== 'REJECTED') {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_EXISTS)
+  }
+
+  const now = new Date().toISOString()
+  const application = {
+    ...values,
+    applicationId: randomUUID(),
+    duplicateKey,
+    status: 'PENDING_APPROVAL',
+    passwordExpiresAt,
+    appliedAt: now,
+    updatedAt: now,
+    auditLog: [{ action: 'SUBMITTED', at: now, actorSub: 'PUBLIC' }],
+  }
+  publicOrganizationApplications.set(application.applicationId, application)
+  organizationApplicationLocks.set(duplicateKey, {
+    applicationId: application.applicationId,
+    status: application.status,
+  })
+  return { ...application }
+}
+
+function deletePendingOrganizationApplication(applicationId) {
+  const application = publicOrganizationApplications.get(applicationId)
+  if (!application || application.status !== 'PENDING_APPROVAL' || application.cognitoSub) {
+    return false
+  }
+  const lock = organizationApplicationLocks.get(application.duplicateKey)
+  if (lock?.applicationId !== applicationId || lock.status !== 'PENDING_APPROVAL') return false
+  publicOrganizationApplications.delete(applicationId)
+  organizationApplicationLocks.delete(application.duplicateKey)
+  return true
+}
+
+function getPublicOrganizationApplication(applicationId) {
+  const application = publicOrganizationApplications.get(applicationId)
+  return application ? { ...application } : null
+}
+
+function updatePublicOrganizationApplication(applicationId, updates, expectedStatuses) {
+  const application = publicOrganizationApplications.get(applicationId)
+  if (!application) return null
+  if (!expectedStatuses.includes(application.status)) {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+  }
+
+  const lock = organizationApplicationLocks.get(application.duplicateKey)
+  if (
+    !lock
+    || lock.applicationId !== applicationId
+    || !expectedStatuses.includes(lock.status)
+  ) {
+    throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+  }
+
+  const { auditEntry, ...fields } = updates
+  const updated = {
+    ...application,
+    ...fields,
+    updatedAt: new Date().toISOString(),
+    auditLog: [...(application.auditLog || []), auditEntry],
+  }
+  publicOrganizationApplications.set(applicationId, updated)
+  organizationApplicationLocks.set(application.duplicateKey, {
+    applicationId,
+    status: updated.status,
+  })
+  return { ...updated }
+}
+
 function createMemoryStore() {
   seed()
   return {
@@ -227,6 +323,10 @@ function createMemoryStore() {
     createOrganizationApplication,
     reapplyOrganizationApplication,
     updateOrganizationApplicationStatus,
+    createPendingOrganizationApplication,
+    deletePendingOrganizationApplication,
+    getPublicOrganizationApplication,
+    updatePublicOrganizationApplication,
     reset: seed,
   }
 }

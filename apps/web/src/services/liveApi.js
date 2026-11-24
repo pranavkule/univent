@@ -106,9 +106,8 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     const payload = await request('/organization-applications', {
       method: 'POST',
       body: input,
-      auth: true,
     })
-    if (!payload?.application) {
+    if (!payload?.application?.applicationId || payload.application.status !== 'PENDING_APPROVAL') {
       throw new ApiError('The server returned an invalid organization application response.', 502)
     }
     return payload.application
@@ -122,12 +121,12 @@ export function createLiveApi({ baseUrl, getAuthHeaders, fetchImpl = globalThis.
     return payload.applications
   }
 
-  async function decideOrganizationApplication(userSub, status, decisionReason = '') {
+  async function decideOrganizationApplication(applicationId, action, details = {}) {
     const payload = await request(
-      `/admin/organization-applications/${encodeURIComponent(userSub)}`,
+      `/admin/organization-applications/${encodeURIComponent(applicationId)}`,
       {
         method: 'PATCH',
-        body: { status, decisionReason },
+        body: { action, ...details },
         auth: true,
       },
     )

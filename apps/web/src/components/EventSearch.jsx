@@ -1,4 +1,4 @@
-import { eventCategories as mockCategories } from '../services/eventCategories.js'
+import { eventCategories } from '../services/eventCategories.js'
 
 // Reusable search + category filter. Controlled by the parent page so the
 // landing discovery section and the Events page share one implementation.
@@ -23,7 +23,7 @@ export default function EventSearch({
         />
       </div>
       <div className="chips" role="group" aria-label="Filter by category">
-        {['All', ...mockCategories].map((c) => (
+        {['All', ...eventCategories].map((c) => (
           <button
             key={c}
             type="button"

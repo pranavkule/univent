@@ -3,8 +3,8 @@
 UniVent REST API. DynamoDB storage and Cognito authorization are defined in
 `infrastructure/template.yaml`.
 
-The frontend uses this contract in live mode; browser-local demo mode remains
-available separately.
+The frontend uses this authenticated API contract; there is no browser-local
+mock API or identity-header authentication path.
 
 ## Routes
 | Method | Path | Handler | Auth | Purpose |
@@ -15,9 +15,9 @@ available separately.
 | PUT | `/events/{eventId}` | `updateEvent.js` | Approved Organization (own) / Admin (all) | Update an event |
 | POST | `/register` | `register.js` | Student | Register for an event |
 | GET | `/registrations?eventId=...` | `getRegistrations.js` | Student (own) / approved Organization (own events) / Admin (all) | List registrations (optionally filter by event) |
-| GET | `/organization-applications` | `organizationApplications.js` | Authenticated applicant (own) / Admin (all) | Read application status or list applications |
-| POST | `/organization-applications` | `organizationApplications.js` | Authenticated verified account | Submit an organization application |
-| PATCH | `/admin/organization-applications/{userSub}` | `organizationApplications.js` | Admin | Approve, reject, or suspend an application |
+| GET | `/organization-applications` | `organizationApplications.js` | Approved Organization (own) / Admin (all) | Read application status or list applications |
+| POST | `/organization-applications` | `organizationApplications.js` | Public, throttled | Submit an organization application without creating a Cognito user |
+| PATCH | `/admin/organization-applications/{applicationId}` | `organizationApplications.js` | Admin | Approve, reject, suspend, or reactivate |
 
 ### Access rules
 - `GET /events` — public, no identity needed.
@@ -36,29 +36,38 @@ available separately.
 - `POST /register` — students only. Organizations and administrators receive
   `403`. The body email must match the signed-in account. Ownership (`email`,
   `ownerEmail`, `userId`) is taken from the authenticated principal, never
-  from body fields. An account with an organization application is not treated
-  as an eligible Student for this route, even while the application is pending.
+  from body fields. Organization approval never adds an organization role to
+  an existing student Cognito account.
 - `GET /registrations` — an administrator sees every registration; a student
   sees only their own registrations; an approved organization sees
   registrations for its own events only. An organization filtering by another
   event receives `403`. Accounts with an organization application cannot use
   the Student registration-list path. `?eventId=` filters the list for each
   allowed role.
-- `GET /organization-applications` — an authenticated non-admin sees only
-  their own application (or `null` before applying); an Admin sees all
-  applications. `userSub` is returned only in the Admin list.
-- `POST /organization-applications` — requires an authenticated Cognito
-  account whose email is verified and ends in the configured exact college
-  domain (`ves.ac.in` in the template). The submitted official email must
-  exactly match the verified token claim. The user identifier is always the
-  trusted Cognito `sub`; body-supplied identifiers are not accepted.
-- `PATCH /admin/organization-applications/{userSub}` — Admin-only. A decision
-  body has `status` (`APPROVED`, `REJECTED`, or `SUSPENDED`) and optional
-  `decisionReason`; rejecting requires a reason of at least three characters.
-  Approval grants the Cognito `organizations` group and persists `APPROVED`.
-  Rejection/suspension persists the non-approved state before removing the
-  group. Organization API calls also check the application record on every
-  request, so stale group claims alone do not authorize access.
+- `GET /organization-applications` — an approved organization sees its own
+  application; an Admin sees current applications and retained legacy history.
+- `POST /organization-applications` — public and rate-limited at API Gateway.
+  The backend validates every field and exact `@ves.ac.in` official
+  organization email, normalizes email casing, rejects unknown keys (including
+  role/status/approval fields), generates the application UUID, and stores the
+  record as `PENDING_APPROVAL`. No Cognito API is called on submission. The
+  selected password is encrypted with KMS and stored separately from
+  application history with a 30-day TTL; plaintext is never persisted. A
+  transactionally maintained lock prevents duplicate applications for the
+  same normalized official email.
+- `PATCH /admin/organization-applications/{applicationId}` — both API Gateway
+  and the Lambda require the `admins` group. `APPROVE` provisions a distinct
+  Cognito account in the existing pool using the official organization email,
+  marks that admin-approved address verified, sets the submitted password,
+  and suppresses Cognito email delivery. It then conditionally persists
+  `APPROVED`, grants the `organizations` group, and enables the account.
+  Approval is idempotent and only reuses a Cognito account bound to the same
+  application. `REJECT` preserves the history and deletes the encrypted
+  password. `SUSPEND` and `REACTIVATE` synchronize account state and group
+  membership. Organization API calls require both the group claim and a
+  persisted, non-legacy approved application bound to the same Cognito `sub`.
+  Historical `PENDING_VERIFICATION` records remain admin-visible but cannot
+  grant access through the new workflow.
 
 ### Organization event ownership and lifecycle
 
@@ -79,36 +88,44 @@ profile management in this API.
 
 ### Organization applications
 
-The organization representative creates a Cognito account through `/org/signup`,
-confirms the email, signs in, and submits the application at `/org/apply`.
-Applications are keyed by Cognito `sub` in `OrganizationApplicationsTable`;
-the conditional write prevents a second application for the same account.
-Valid statuses are `PENDING`, `APPROVED`, `REJECTED`, and `SUSPENDED`.
+Organization signup at `/org/signup` collects the official organization
+email, contact details, and a separately selected password without creating a
+Cognito account or requiring email OTP. The existing
+`OrganizationApplicationsTable` is retained for legacy records; new
+applications use the UUID-keyed `PublicOrganizationApplicationsTable` and
+`OrganizationApplicationLocksTable`. The lock key is a SHA-256 digest of the
+normalized official email.
 
 Submission body:
 
 ```json
 {
   "organizationName": "Robotics Club",
+  "applicantName": "Aarav Mehta",
   "officialEmail": "robotics@ves.ac.in",
-  "representativeName": "Aarav Mehta",
+  "department": "Engineering",
   "representativeTitle": "Secretary",
-  "representativePhone": "+1 555 010 1234"
+  "representativePhone": "+1 555 010 1234",
+  "reason": "Manage events and registrations for the club.",
+  "password": "<selected password>"
 }
 ```
 
-The response is `{ "application": { ... } }` with `201`. An applicant's GET
-returns `{ "application": null }` before submission or the saved application;
-an Admin GET returns `{ "applications": [...] }`. Application decisions use
-one of these bodies and return the saved `application` with `200`:
+The confirmation password is validated by the frontend and is not sent to the
+API. The success response contains only the generated application ID and
+`PENDING_APPROVAL` status (`201`). Pending and rejected applications have no
+Cognito account and cannot log in. An Admin GET returns
+`{ "applications": [...] }`, including legacy history. Admin action bodies
+return the saved application with `200`:
 
 ```json
-{ "status": "APPROVED" }
-{ "status": "REJECTED", "decisionReason": "..." }
-{ "status": "SUSPENDED" }
+{ "action": "APPROVE" }
+{ "action": "REJECT", "reason": "Please update the organization details." }
+{ "action": "SUSPEND", "reason": "..." }
+{ "action": "REACTIVATE" }
 ```
 
-A duplicate submission or conflicting concurrent decision returns `409`.
+A duplicate pending submission or conflicting status transition returns `409`.
 
 Only an Admin can list all applications or decide them. A group is granted only
 after the Admin approves. If Cognito group removal fails after a rejection or
@@ -117,11 +134,12 @@ endpoints, and repeating the decision retries group cleanup. Approval requires
 the Lambda execution role to have `cognito-idp:AdminAddUserToGroup`; rejection
 and suspension require `cognito-idp:AdminRemoveUserFromGroup`.
 
-The applications table has only a `userSub` partition key. Admin listing scans
-the table, so this is suitable for the current small project but should move to
-a paginated/indexed review design before application volume grows. Existing
-organization group members without an application record are denied
-organization access until they submit an application and an Admin approves it.
+Admin listing scans the application tables, which is suitable for the current
+small project but should become paginated before application volume grows.
+The applicant client and its PostConfirmation classification remain for
+in-flight legacy confirmations; new organization signup uses the primary
+client only after admin approval. The PostConfirmation trigger remains
+necessary for student classification.
 
 ### Response envelopes
 Reads return a JSON object with one key:
@@ -231,31 +249,18 @@ API Gateway rejects a missing/invalid/expired token with `401` before Lambda
 runs. Lambda returns `403` when the authenticated role is not allowed to do the
 action. The frontend role guards are UX only.
 
-## Local development identity
-Without Cognito, local testing can use these headers:
-
-| Header | Example | Meaning |
-| ------ | ------- | ------- |
-| `x-univent-role` | `admin` / `student` / `organization` | role of the caller |
-| `x-univent-email` | `admin@univent.demo` | email of the caller |
-| `x-univent-name` | `Demo Admin` | display name of the caller |
-| `x-univent-sub` | `local-user-1` | optional user id |
-
-They are honoured **only** when `UNIVENT_DEV_AUTH=true` and the code is
-running outside AWS Lambda or inside SAM local (`AWS_SAM_LOCAL=true`). In a
-deployed Lambda, `AWS_EXECUTION_ENV` is set and `AWS_SAM_LOCAL` is absent, so
-client-supplied roles are ignored. The deployed template sets
-`UNIVENT_DEV_AUTH=false`.
-
-When the API runs with a Cognito authorizer (Phase 5), the identity is taken
-from the authorizer claims instead and the headers are not used.
+## Local development
+The plain Node server exposes only public `GET /events`. It does not simulate
+an authenticated identity. Protected routes must be tested through API Gateway
+with a valid Cognito ID token; caller-supplied role headers are never trusted.
 
 ## Storage
 `UNIVENT_STORE` selects the implementation behind
 `backend/functions/lib/store.js`:
 
-- `memory` (default) — seeded in-process store used by unit tests and the quick
-  local server. Not persistent and not shared between Lambda instances.
+- `memory` (default) — seeded in-process store used by unit tests and the
+  local public events endpoint. Not persistent or shared between Lambda
+  instances.
 - `dynamodb` — the deployed mode. Reads/writes the `Events`,
   `Registrations`, and `OrganizationApplications` tables. Registration is
   atomic via `TransactWriteItems`; duplicate and capacity checks are enforced
@@ -278,18 +283,23 @@ are provisioned privately; see `docs/aws-setup.md`.
 template now points Lambda at DynamoDB, so a local SAM run needs either real
 dev tables or DynamoDB Local plus local-only environment overrides (table names,
 `DYNAMODB_ENDPOINT`, `AWS_REGION`, and dummy `AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY` values). Do not use local identity or dummy credential
-settings in a deployment.
+`AWS_SECRET_ACCESS_KEY` values). Do not use dummy credential settings in a
+deployment.
 
 For a quick local run without SAM, Docker, or AWS:
 
 ```bash
-UNIVENT_DEV_AUTH=true node scripts/dev-api.js   # http://localhost:3000
+node scripts/dev-api.js   # http://localhost:3000; public GET /events only
 ```
 
-This uses the seeded in-memory store and requires no DynamoDB credentials.
+This serves seeded in-memory events and requires no DynamoDB credentials.
+Authenticated routes require API Gateway and Cognito.
 
-## Sample requests and responses (captured from the local server)
+## API request and response examples
+
+The local server supports only the public `GET /events` example below.
+Protected examples require `API_URL` for the deployed API and a valid Cognito
+ID token in `ID_TOKEN`.
 
 ### GET /events (public)
 ```bash
@@ -313,9 +323,9 @@ Access-Control-Max-Age: 600
 
 ### POST /events (admin or organization)
 ```bash
-curl -X POST http://localhost:3000/events \
+curl -X POST "$API_URL/events" \
   -H "Content-Type: application/json" \
-  -H "x-univent-role: admin" -H "x-univent-email: admin@univent.demo" \
+  -H "Authorization: Bearer $ID_TOKEN" \
   -d '{"title":"Serverless Meetup","date":"2026-12-05","venue":"CSE Seminar Room","capacity":60,"category":"Technical","organizer":"CodeCell","startTime":"16:00","endTime":"18:00","regDeadline":"2026-12-04"}'
 ```
 ```json
@@ -330,9 +340,9 @@ With a missing title: `400 {"message":"Title is required."}`.
 
 ### POST /register
 ```bash
-curl -X POST http://localhost:3000/register \
+curl -X POST "$API_URL/register" \
   -H "Content-Type: application/json" \
-  -H "x-univent-role: student" -H "x-univent-email: asha@ves.ac.in" \
+  -H "Authorization: Bearer $ID_TOKEN" \
   -d '{"eventId":"e1","name":"Asha Sharma","email":"asha@ves.ac.in"}'
 ```
 ```json
@@ -355,8 +365,8 @@ Status `201`. Other outcomes:
 
 ### GET /registrations
 ```bash
-curl "http://localhost:3000/registrations?eventId=e1" \
-  -H "x-univent-role: admin" -H "x-univent-email: admin@univent.demo"
+curl "$API_URL/registrations?eventId=e1" \
+  -H "Authorization: Bearer $ID_TOKEN"
 ```
 ```json
 { "registrations": [ { "registrationId": "reg-9e6d8027cf7b", "eventId": "e1",
@@ -372,4 +382,4 @@ Status `200`. Not signed in: `401`. Unknown `eventId`: `404`.
   organizations can create events, which publish immediately.
 - Registration cancellation and individual registration lookup routes.
 - Deployed live API/Cognito verification — Phase 7. Phase 6 wires the frontend
-  to this API and sends the Cognito ID token; mock mode remains available.
+  to this API and sends the Cognito ID token.

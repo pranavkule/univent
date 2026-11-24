@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   isAllowedStudentEmail,
   validateConfirmationInput,
+  validateNewPasswordInput,
   validateSignInInput,
   validateSignUpInput,
 } from './authValidation.js'
@@ -31,7 +32,7 @@ describe('student auth validation', () => {
     const valid = validateSignUpInput({
       name: 'Asha Sharma',
       email: 'asha@ves.ac.in',
-      password: 'Demo@123',
+      password: 'CampusPass1',
     })
     assert.deepEqual(valid, {})
 
@@ -55,15 +56,21 @@ describe('student auth validation', () => {
   })
 
   it('validates sign-in email and password presence', () => {
-    assert.deepEqual(validateSignInInput({ email: 'admin@univent.demo', password: 'x' }), {})
+    assert.deepEqual(validateSignInInput({ email: 'asha@ves.ac.in', password: 'x' }), {})
     assert.ok(validateSignInInput({ email: 'bad', password: '' }).email)
-    assert.ok(validateSignInInput({ email: 'admin@univent.demo', password: '' }).password)
+    assert.ok(validateSignInInput({ email: 'asha@ves.ac.in', password: '' }).password)
   })
 
   it('validates a six-digit confirmation code', () => {
     assert.deepEqual(validateConfirmationInput({ code: '123456' }), {})
     assert.ok(validateConfirmationInput({ code: '123' }).code)
     assert.ok(validateConfirmationInput({ code: 'abcdef' }).code)
+  })
+
+  it('validates the password entered after Cognito’s first-login challenge', () => {
+    assert.equal(validateNewPasswordInput('CampusPass1', 'CampusPass1'), '')
+    assert.match(validateNewPasswordInput('short', 'short'), /8 characters/)
+    assert.match(validateNewPasswordInput('CampusPass1', 'DifferentPass2'), /do not match/)
   })
 })
 

@@ -1,41 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
+import { Link } from 'react-router-dom'
 import { listPlatformEvents } from '../../services/admin.js'
-import { API_MODE } from '../../services/api.js'
-import { eventCategories as mockCategories } from '../../services/eventCategories.js'
-import { ORG_STATUSES, moderateOrgEvent } from '../../services/orgEvents.js'
-
-// Event management across the platform: public system events (read-only
-// mock rows) plus every organization's events with approve / reject /
-// cancel moderation. Approval is required before org events go live —
-// nothing becomes public from this screen in the mock. Mock data only.
-const MODERATABLE = new Set(['pending', 'published'])
+import { eventCategories } from '../../services/eventCategories.js'
 
 export default function AdminEvents() {
-  const location = useLocation()
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState(location.state?.notice || '')
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('All')
   const [orgFilter, setOrgFilter] = useState('all')
-  const [busy, setBusy] = useState(null)
-  const [moderateTarget, setModerateTarget] = useState(null)
-  const [moderateAction, setModerateAction] = useState('reject')
-  const [reason, setReason] = useState('')
-  const [reasonError, setReasonError] = useState('')
-
-  async function refresh() {
-    const list = await listPlatformEvents()
-    setEvents(list)
-  }
 
   useEffect(() => {
     let cancelled = false
-    refresh()
+    listPlatformEvents()
+      .then((list) => {
+        if (!cancelled) setEvents(list)
+      })
       .catch((err) => {
         if (!cancelled) setError(err.message || 'Could not load events.')
       })
@@ -47,81 +28,29 @@ export default function AdminEvents() {
     }
   }, [])
 
-  const orgOptions = useMemo(() => {
-    const set = new Set(events.filter((e) => e.source === 'organization').map((e) => e.orgName || e.orgEmail))
-    return [...set].sort()
-  }, [events])
+  const orgOptions = useMemo(
+    () => [...new Set(events.map((event) => event.organizer || 'UniVent'))].sort(),
+    [events],
+  )
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return events.filter((e) => {
-      if (statusFilter !== 'all' && e.status !== statusFilter) return false
-      if (categoryFilter !== 'All' && e.category !== categoryFilter) return false
-      if (orgFilter !== 'all' && (e.orgName || e.orgEmail) !== orgFilter) return false
-      if (!q) return true
-      return `${e.title} ${e.venue || ''}`.toLowerCase().includes(q)
+    const text = query.trim().toLowerCase()
+    return events.filter((event) => {
+      if (categoryFilter !== 'All' && event.category !== categoryFilter) return false
+      if (orgFilter !== 'all' && (event.organizer || 'UniVent') !== orgFilter) return false
+      return !text || `${event.title} ${event.venue || ''}`.toLowerCase().includes(text)
     })
-  }, [events, query, statusFilter, categoryFilter, orgFilter])
-
-  async function handleApprove(e) {
-    if (!window.confirm(`Approve "${e.title}" for publication?`)) return
-    setBusy(e.eventId)
-    setNotice('')
-    setError('')
-    try {
-      await moderateOrgEvent(e.eventId, 'approve')
-      await refresh()
-      setNotice(`Demo approval recorded: "${e.title}" is now published in this browser. No AWS data changed.`)
-    } catch (err) {
-      setError(err.message || 'Approval failed.')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  function openModerate(e, action) {
-    setModerateTarget(e)
-    setModerateAction(action)
-    setReason('')
-    setReasonError('')
-    setNotice('')
-  }
-
-  function submitModerate(ev) {
-    ev.preventDefault()
-    if (reason.trim().length < 3) {
-      setReasonError('Give a short reason (min 3 characters); it is shown to the organization.')
-      return
-    }
-    setReasonError('')
-    const target = moderateTarget
-    const action = moderateAction
-    const label = action === 'reject' ? 'Reject' : 'Cancel'
-    if (!window.confirm(`${label} "${target.title}"?`)) return
-    setBusy(target.eventId)
-    setNotice('')
-    setError('')
-    moderateOrgEvent(target.eventId, action, reason.trim())
-      .then(() => refresh())
-      .then(() => {
-        setNotice(`Demo ${action === 'reject' ? 'rejection' : 'cancellation'} recorded for "${target.title}" in this browser. No AWS data changed.`)
-        setModerateTarget(null)
-        setReason('')
-      })
-      .catch((err) => setError(err.message || 'Action failed.'))
-      .finally(() => setBusy(null))
-  }
+  }, [events, query, categoryFilter, orgFilter])
 
   if (loading) return <div className="skeleton">Loading events…</div>
 
   return (
     <>
       <p className="muted org-sub">
-        {events.length} events across the platform. Organization event approvals are a demo workflow — decisions stay in this browser and are not written to DynamoDB.
-        {' '}{API_MODE === 'live' ? 'System events come from the live API.' : 'System events come from mock data.'}
+        Events shown here are loaded from the API. Event moderation is not
+        available in the backend.
         {' '}<Link className="link-more" to="/admin/events/new">Create event</Link>
       </p>
-      {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       <div className="toolbar" role="search">
@@ -131,134 +60,49 @@ export default function AdminEvents() {
           type="search"
           placeholder="Search title or venue…"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(event) => setQuery(event.target.value)}
           className="org-search"
         />
-        <label htmlFor="admin-events-status">Status</label>
-        <select id="admin-events-status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">All statuses</option>
-          {ORG_STATUSES.map((s) => (
-            <option key={s} value={s}>{statusLabel(s)}</option>
-          ))}
-        </select>
         <label htmlFor="admin-events-category">Category</label>
-        <select id="admin-events-category" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+        <select id="admin-events-category" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
           <option value="All">All categories</option>
-          {mockCategories.map((c) => (
-            <option key={c} value={c}>{c}</option>
+          {eventCategories.map((category) => (
+            <option key={category} value={category}>{category}</option>
           ))}
         </select>
-        <label htmlFor="admin-events-org">Organization</label>
-        <select id="admin-events-org" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
+        <label htmlFor="admin-events-org">Organizer</label>
+        <select id="admin-events-org" value={orgFilter} onChange={(event) => setOrgFilter(event.target.value)}>
           <option value="all">All organizers</option>
-          <option value="UniVent">UniVent (system)</option>
-          {orgOptions.map((o) => (
-            <option key={o} value={o}>{o}</option>
+          {orgOptions.map((organizer) => (
+            <option key={organizer} value={organizer}>{organizer}</option>
           ))}
         </select>
       </div>
 
-      {filtered.length === 0 ? (
+      {!error && filtered.length === 0 ? (
         <div className="alert alert-empty">No events match your search or filters.</div>
-      ) : (
+      ) : !error && (
         <div className="org-table-wrap">
           <table className="reg-table">
             <thead>
-              <tr><th>Event</th><th>Organizer</th><th>Date</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr>
+              <tr><th>Event</th><th>Organizer</th><th>Date</th><th>Category</th></tr>
             </thead>
             <tbody>
-              {filtered.map((e) => (
-                <tr key={`${e.source}-${e.eventId}`}>
+              {filtered.map((event) => (
+                <tr key={event.eventId}>
                   <td>
-                    {e.title}
+                    {event.title}
                     <br />
-                    <span className="muted">{e.category || '—'} · {e.venue || '—'}</span>
-                    {e.moderationNote && <br />}
-                    {e.moderationNote && <span className="muted">Note: {e.moderationNote}</span>}
+                    <span className="muted">{event.venue || '—'}</span>
                   </td>
-                  <td>{e.source === 'system' ? 'UniVent (system)' : (e.orgName || e.orgEmail)}</td>
-                  <td>{e.date}</td>
-                  <td><OrgStatusBadge status={e.status} /></td>
-                  <td className="org-actions">
-                    {e.source === 'system' ? (
-                      <span className="muted">System row</span>
-                    ) : (
-                      <>
-                        {e.status === 'pending' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            disabled={busy === e.eventId}
-                            onClick={() => handleApprove(e)}
-                          >
-                            {busy === e.eventId ? 'Working…' : 'Approve'}
-                          </button>
-                        )}
-                        {MODERATABLE.has(e.status) && (
-                          <>
-                            {e.status === 'pending' && (
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                disabled={busy === e.eventId}
-                                onClick={() => openModerate(e, 'reject')}
-                              >
-                                Reject
-                              </button>
-                            )}
-                            {e.status === 'published' && (
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                disabled={busy === e.eventId}
-                                onClick={() => openModerate(e, 'cancel')}
-                              >
-                                Cancel
-                              </button>
-                            )}
-                          </>
-                        )}
-                        {!MODERATABLE.has(e.status) && (
-                          <span className="muted">Closed</span>
-                        )}
-                      </>
-                    )}
-                  </td>
+                  <td>{event.organizer || 'UniVent'}</td>
+                  <td>{event.date}</td>
+                  <td>{event.category || '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
-
-      {moderateTarget && (
-        <form
-          className="detail"
-          onSubmit={submitModerate}
-          aria-label={`${moderateAction === 'reject' ? 'Reject' : 'Cancel'} ${moderateTarget.title}`}
-        >
-          <h3>{moderateAction === 'reject' ? 'Reject' : 'Cancel'} “{moderateTarget.title}”</h3>
-          <p className="muted">A reason is required; it is shown to the organization as a moderation note.</p>
-          <div className="field">
-            <label htmlFor="admin-moderate-reason">Reason</label>
-            <textarea
-              id="admin-moderate-reason"
-              rows="3"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Venue booking could not be verified"
-            />
-            {reasonError && <span className="field-error" role="alert">{reasonError}</span>}
-          </div>
-          <div className="org-form-actions">
-            <button type="submit" className="btn" disabled={busy === moderateTarget.eventId}>
-              {busy === moderateTarget.eventId ? 'Working…' : `Confirm ${moderateAction === 'reject' ? 'rejection' : 'cancellation'}`}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => { setModerateTarget(null); setReason('') }}>
-              Back
-            </button>
-          </div>
-        </form>
       )}
     </>
   )

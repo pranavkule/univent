@@ -26,14 +26,12 @@ Globals:
         # Browser origin allowed to call the API. Phase 7 pins this to the
         # deployed S3/CloudFront origin; '*' is fine while testing locally.
         CORS_ORIGIN: '*'
-        # Local development identity headers stay off in the deployed stack.
-        # The handlers also refuse those headers whenever AWS_EXECUTION_ENV
-        # is set, which is always the case inside AWS Lambda.
-        UNIVENT_DEV_AUTH: 'false'
 
 Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub '${AWS::StackName}-users'
       UsernameAttributes:
@@ -47,6 +45,12 @@ Resources:
           StringAttributeConstraints:
             MinLength: '1'
             MaxLength: '32'
+        - Name: org_application_id
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '64'
       AutoVerifiedAttributes:
         - email
       MfaConfiguration: 'OFF'
@@ -66,6 +70,8 @@ Resources:
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       ClientName: !Sub '${AWS::StackName}-web'
       UserPoolId: !Ref UserPool
@@ -95,6 +101,8 @@ Resources:
 
   OrganizationApplicantUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       ClientName: !Sub '${AWS::StackName}-organization-applicant'
       UserPoolId: !Ref UserPool
@@ -124,6 +132,8 @@ Resources:
 
   AdminsGroup:
     Type: AWS::Cognito::UserPoolGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       GroupName: admins
       Description: UniVent platform administrators
@@ -132,6 +142,8 @@ Resources:
 
   OrganizationsGroup:
     Type: AWS::Cognito::UserPoolGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       GroupName: organizations
       Description: Approved organization representatives
@@ -140,6 +152,8 @@ Resources:
 
   EventsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -164,6 +178,8 @@ Resources:
 
   RegistrationsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -192,6 +208,8 @@ Resources:
 
   OrganizationApplicationsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -202,6 +220,119 @@ Resources:
           KeyType: HASH
       SSESpecification:
         SSEEnabled: true
+
+  PublicOrganizationApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: applicationId
+          AttributeType: S
+        - AttributeName: cognitoSub
+          AttributeType: S
+      KeySchema:
+        - AttributeName: applicationId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: CognitoSubIndex
+          KeySchema:
+            - AttributeName: cognitoSub
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+
+  OrganizationApplicationLocksTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: duplicateKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: duplicateKey
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  OrganizationApplicationPasswordsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: applicationId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: applicationId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  OrganizationApplicationPasswordsKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Encrypt short-lived organization application passwords
+      EnableKeyRotation: false
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: KeyAdministrationWithoutCryptographicUse
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action:
+              - kms:CancelKeyDeletion
+              - kms:DescribeKey
+              - kms:DisableKey
+              - kms:DisableKeyRotation
+              - kms:EnableKey
+              - kms:EnableKeyRotation
+              - kms:GetKeyPolicy
+              - kms:GetKeyRotationStatus
+              - kms:ListResourceTags
+              - kms:PutKeyPolicy
+              - kms:ScheduleKeyDeletion
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:UpdateKeyDescription
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+          - Sid: VoclabsKeyPolicyUpdates
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/voclabs'
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:PutKeyPolicy
+            Resource: '*'
+          - Sid: OrganizationApplicationPasswordCryptography
+            Effect: Allow
+            Principal:
+              AWS: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt OrganizationApplicationsRole.Arn]
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                kms:EncryptionContext:purpose: univent-organization-application-password
+              StringLike:
+                kms:EncryptionContext:applicationId: '?*'
 
   PreSignUpRole:
     Type: AWS::IAM::Role
@@ -216,6 +347,15 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: IdentifyStudentAppClient
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:ListUserPoolClients
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
 
   PostConfirmationRole:
     Type: AWS::IAM::Role
@@ -230,16 +370,6 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: ClassifyConfirmedUser
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - cognito-idp:ListUserPoolClients
-                  - cognito-idp:AdminUpdateUserAttributes
-                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
 
   GetEventsRole:
     Type: AWS::IAM::Role
@@ -298,6 +428,14 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${PublicOrganizationApplicationsTable.Arn}/index/CognitoSubIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt PublicOrganizationApplicationsTable.Arn
 
   CreateEventRole:
     Type: AWS::IAM::Role
@@ -331,6 +469,14 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${PublicOrganizationApplicationsTable.Arn}/index/CognitoSubIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt PublicOrganizationApplicationsTable.Arn
 
   RegisterRole:
     Type: AWS::IAM::Role
@@ -365,6 +511,14 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${PublicOrganizationApplicationsTable.Arn}/index/CognitoSubIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt PublicOrganizationApplicationsTable.Arn
 
   GetRegistrationsRole:
     Type: AWS::IAM::Role
@@ -406,6 +560,14 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${PublicOrganizationApplicationsTable.Arn}/index/CognitoSubIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt PublicOrganizationApplicationsTable.Arn
 
   OrganizationApplicationsRole:
     Type: AWS::IAM::Role
@@ -434,9 +596,40 @@ Resources:
                 Resource: !GetAtt OrganizationApplicationsTable.Arn
               - Effect: Allow
                 Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                  - dynamodb:TransactWriteItems
+                Resource: !GetAtt PublicOrganizationApplicationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${PublicOrganizationApplicationsTable.Arn}/index/CognitoSubIndex'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:TransactWriteItems
+                Resource: !GetAtt OrganizationApplicationLocksTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt OrganizationApplicationPasswordsTable.Arn
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
                   - cognito-idp:AdminGetUser
                   - cognito-idp:AdminAddUserToGroup
                   - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminUserGlobalSignOut
                 Resource: !GetAtt UserPool.Arn
 
   UniventApi:
@@ -449,6 +642,11 @@ Resources:
         Authorizers:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt UserPool.Arn
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
       GatewayResponses:
         UNAUTHORIZED:
           StatusCode: 401
@@ -472,13 +670,14 @@ Resources:
   PreSignUpFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Restrict student self sign-up to the configured college email domain
+      Description: Restrict self sign-up to the student app and college email domain
       CodeUri: ../backend/functions/
       Handler: preSignUp.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt PreSignUpRole.Arn]
       Environment:
         Variables:
           ALLOWED_SIGNUP_DOMAIN: ves.ac.in
+          STUDENT_CLIENT_NAME: !Sub '${AWS::StackName}-web'
 
   PreSignUpPermission:
     Type: AWS::Lambda::Permission
@@ -491,14 +690,10 @@ Resources:
   PostConfirmationFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Assign a persistent account type after Cognito email confirmation
+      Description: Preserve the Cognito post-confirmation trigger without account mutation
       CodeUri: ../backend/functions/
       Handler: postConfirmation.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt PostConfirmationRole.Arn]
-      Environment:
-        Variables:
-          STUDENT_CLIENT_NAME: !Sub '${AWS::StackName}-web'
-          ORGANIZATION_APPLICANT_CLIENT_NAME: !Sub '${AWS::StackName}-organization-applicant'
 
   PostConfirmationPermission:
     Type: AWS::Lambda::Permission
@@ -543,6 +738,8 @@ Resources:
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
       Events:
         CreateEvent:
           Type: Api
@@ -567,6 +764,8 @@ Resources:
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
       Events:
         ListOrganizationEvents:
           Type: Api
@@ -591,6 +790,8 @@ Resources:
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
       Events:
         UpdateEvent:
           Type: Api
@@ -615,6 +816,8 @@ Resources:
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
       Events:
         Register:
           Type: Api
@@ -640,6 +843,8 @@ Resources:
           REGISTRATIONS_OWNER_INDEX: OwnerEmailIndex
           EVENTS_OWNER_INDEX: OrganizationOwnerIndex
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
       Events:
         ListRegistrations:
           Type: Api
@@ -653,7 +858,7 @@ Resources:
   OrganizationApplicationsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Submit, review, and decide persisted organization applications
+      Description: Receive organization applications and provision approved accounts
       CodeUri: ../backend/functions/
       Handler: organizationApplications.handler
       Role: !If [UseSuppliedRole, !Ref LambdaExecutionRoleArn, !GetAtt OrganizationApplicationsRole.Arn]
@@ -663,7 +868,12 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           REGISTRATIONS_TABLE: !Ref RegistrationsTable
           ORGANIZATION_APPLICATIONS_TABLE: !Ref OrganizationApplicationsTable
+          PUBLIC_ORGANIZATION_APPLICATIONS_TABLE: !Ref PublicOrganizationApplicationsTable
+          ORGANIZATION_APPLICATION_LOCKS_TABLE: !Ref OrganizationApplicationLocksTable
+          ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX: CognitoSubIndex
           COGNITO_USER_POOL_ID: !Ref UserPool
+          ORGANIZATION_APPLICATION_PASSWORDS_TABLE: !Ref OrganizationApplicationPasswordsTable
+          ORGANIZATION_APPLICATION_PASSWORDS_KEY_ARN: !GetAtt OrganizationApplicationPasswordsKey.Arn
           ALLOWED_SIGNUP_DOMAIN: ves.ac.in
       Events:
         ListOrGetApplications:
@@ -680,13 +890,11 @@ Resources:
             RestApiId: !Ref UniventApi
             Path: /organization-applications
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
         DecideApplication:
           Type: Api
           Properties:
             RestApiId: !Ref UniventApi
-            Path: /admin/organization-applications/{userSub}
+            Path: /admin/organization-applications/{applicationId}
             Method: PATCH
             Auth:
               Authorizer: CognitoAuthorizer
@@ -702,7 +910,7 @@ Outputs:
     Description: Cognito app client ID for the React application
     Value: !Ref UserPoolClient
   OrganizationApplicantUserPoolClientId:
-    Description: Cognito app client ID used only by organization applicant signup
+    Description: Retained legacy organization applicant app client; not used by new applications
     Value: !Ref OrganizationApplicantUserPoolClient
   CognitoRegion:
     Description: AWS region containing the Cognito User Pool
@@ -711,8 +919,14 @@ Outputs:
     Description: DynamoDB events table name
     Value: !Ref EventsTable
   OrganizationApplicationsTableName:
-    Description: DynamoDB table for verified organization applications and decisions
+    Description: Existing DynamoDB table for legacy organization application history
     Value: !Ref OrganizationApplicationsTable
+  PublicOrganizationApplicationsTableName:
+    Description: DynamoDB table for admin-assisted organization applications
+    Value: !Ref PublicOrganizationApplicationsTable
+  OrganizationApplicationLocksTableName:
+    Description: DynamoDB table for conditional duplicate application prevention
+    Value: !Ref OrganizationApplicationLocksTable
   RegistrationsTableName:
     Description: DynamoDB registrations table name
     Value: !Ref RegistrationsTable

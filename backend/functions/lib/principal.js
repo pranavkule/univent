@@ -1,17 +1,4 @@
-// Identity resolution for the UniVent handlers.
-//
-// This module resolves the caller in two ways:
-//
-// 1. API Gateway Cognito authorizer claims (REST API
-//    `requestContext.authorizer.claims`, HTTP API
-//    `requestContext.authorizer.jwt.claims`).
-// 2. A LOCAL DEVELOPMENT header, used only for local testing.
-//
-// The development fallback is deliberately hard to turn on:
-//   - UNIVENT_DEV_AUTH must be exactly "true" (off by default), and
-//   - AWS_EXECUTION_ENV blocks the headers in AWS Lambda. SAM local is the
-//     only exception, identified by its AWS_SAM_LOCAL marker.
-// Client-supplied roles are therefore never trusted in a deployed stack.
+// Resolve identity only from API Gateway Cognito authorizer claims.
 
 const ROLES = {
   ADMIN: 'admin',
@@ -21,21 +8,6 @@ const ROLES = {
 
 const ADMIN_GROUP = 'admins'
 const ORGANIZATION_GROUP = 'organizations'
-
-function devAuthEnabled() {
-  if (process.env.UNIVENT_DEV_AUTH !== 'true') return false
-  if (process.env.AWS_EXECUTION_ENV && process.env.AWS_SAM_LOCAL !== 'true') return false
-  return true
-}
-
-function headerValue(headers, name) {
-  if (!headers) return ''
-  const target = name.toLowerCase()
-  for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() === target) return String(headers[key] || '')
-  }
-  return ''
-}
 
 function asArray(value) {
   if (Array.isArray(value)) return value
@@ -76,27 +48,6 @@ function principalFromClaims(claims) {
   }
 }
 
-function principalFromDevHeaders(event) {
-  if (!devAuthEnabled()) return null
-  const headers = (event && event.headers) || {}
-  const role = headerValue(headers, 'x-univent-role').trim().toLowerCase()
-  if (!role) return null
-  const email = headerValue(headers, 'x-univent-email').trim().toLowerCase()
-  const name = headerValue(headers, 'x-univent-name').trim()
-  const sub = headerValue(headers, 'x-univent-sub').trim()
-  const resolvedRole = Object.values(ROLES).includes(role) ? role : ROLES.STUDENT
-  return {
-    authenticated: true,
-    source: 'dev-header',
-    sub: sub || `dev-${email || 'user'}`,
-    email,
-    emailVerified: false,
-    name,
-    role: resolvedRole,
-    groups: [],
-  }
-}
-
 function anonymousPrincipal() {
   return {
     authenticated: false,
@@ -110,7 +61,7 @@ function anonymousPrincipal() {
 }
 
 function resolvePrincipal(event) {
-  return principalFromClaims(claimsFromEvent(event)) || principalFromDevHeaders(event) || anonymousPrincipal()
+  return principalFromClaims(claimsFromEvent(event)) || anonymousPrincipal()
 }
 
 function hasRole(principal, ...roles) {
@@ -133,7 +84,6 @@ function isOrganization(principal) {
 
 module.exports = {
   ROLES,
-  devAuthEnabled,
   resolvePrincipal,
   hasRole,
   isAdmin,

@@ -1,11 +1,7 @@
 // Shared HTTP helpers: JSON responses, CORS headers, body parsing.
 // Every response (including errors) is JSON and carries CORS headers so the
 // S3-hosted frontend can call the API (docs/api.md).
-const { devAuthEnabled } = require('./principal')
-
 const DEFAULT_ORIGIN = '*'
-const BASE_ALLOWED_HEADERS = 'Content-Type,Authorization'
-const DEV_ALLOWED_HEADERS = 'X-Univent-Role,X-Univent-Email,X-Univent-Name,X-Univent-Sub'
 const MAX_BODY_LENGTH = 100000
 
 function corsOrigin() {
@@ -14,12 +10,9 @@ function corsOrigin() {
 }
 
 function corsHeaders() {
-  const allowedHeaders = devAuthEnabled()
-    ? `${BASE_ALLOWED_HEADERS},${DEV_ALLOWED_HEADERS}`
-    : BASE_ALLOWED_HEADERS
   return {
     'Access-Control-Allow-Origin': corsOrigin(),
-    'Access-Control-Allow-Headers': allowedHeaders,
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,OPTIONS',
     'Access-Control-Max-Age': '600',
   }

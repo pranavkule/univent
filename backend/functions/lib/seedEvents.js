@@ -1,6 +1,6 @@
 // Sample events used by the temporary in-memory store (Phase 3).
-// The fields and their meaning match the mock data the Phase 2 frontend
-// already renders (apps/web/src/services/mockEvents.js) so the API can be
+// The fields and their meaning match the static presentation data the
+// frontend renders (apps/web/src/services/sampleEvents.js) so the API can be
 // swapped in without changing the UI.
 const seedEvents = [
   {

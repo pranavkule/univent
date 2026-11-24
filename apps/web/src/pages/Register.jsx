@@ -7,7 +7,7 @@ import { getRemainingSeats } from '../services/eventAvailability.js'
 
 // Registration form with pre-submit guards: full events, closed
 // registration windows, and already-registered students see a message
-// instead of the form. Duplicates are also rejected by the mock API (409).
+// instead of the form. Duplicate registrations are rejected by the API (409).
 export default function Register() {
   const { id } = useParams()
   const navigate = useNavigate()

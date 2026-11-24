@@ -9,6 +9,7 @@
 // registration atomically. Capacity-limited events must have a verified
 // counter (registeredCount + registrationCounterReady). A missing or false
 // readiness flag fails closed instead of treating the count as zero.
+const { randomUUID } = require('node:crypto')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
 const {
   DynamoDBDocumentClient,
@@ -20,6 +21,7 @@ const {
   UpdateCommand,
 } = require('@aws-sdk/lib-dynamodb')
 const { makeId } = require('./ids')
+const { duplicateKeyForApplication } = require('./organizationApplicationIdentity')
 const { CODES, StoreError } = require('./storeError')
 
 const OWNER_INDEX_DEFAULT = 'OwnerEmailIndex'
@@ -68,6 +70,18 @@ function createDynamoStore(options = {}) {
     options.organizationApplicationsTable ||
     process.env.ORGANIZATION_APPLICATIONS_TABLE ||
     'OrganizationApplications'
+  const publicOrganizationApplicationsTable =
+    options.publicOrganizationApplicationsTable ||
+    process.env.PUBLIC_ORGANIZATION_APPLICATIONS_TABLE ||
+    'OrganizationApplicationsPublic'
+  const organizationApplicationLocksTable =
+    options.organizationApplicationLocksTable ||
+    process.env.ORGANIZATION_APPLICATION_LOCKS_TABLE ||
+    'OrganizationApplicationLocks'
+  const organizationApplicationsCognitoSubIndex =
+    options.organizationApplicationsCognitoSubIndex ||
+    process.env.ORGANIZATION_APPLICATIONS_COGNITO_SUB_INDEX ||
+    'CognitoSubIndex'
   const ownerIndex = options.ownerIndex || process.env.REGISTRATIONS_OWNER_INDEX || OWNER_INDEX_DEFAULT
   const eventOwnerIndex =
     options.eventOwnerIndex || process.env.EVENTS_OWNER_INDEX || EVENT_OWNER_INDEX_DEFAULT
@@ -445,17 +459,297 @@ function createDynamoStore(options = {}) {
         ConsistentRead: true,
       }),
     )
-    return result.Item || null
+    if (result.Item) return { ...result.Item, isLegacy: true, applicationId: result.Item.userSub }
+    const candidates = await listPublicOrganizationApplicationsByCognitoSub(userSub)
+    const linked = (await Promise.all(
+      candidates.map((item) => getPublicOrganizationApplication(item.applicationId)),
+    )).filter((item) => item && item.cognitoSub === userSub)
+    linked.sort((left, right) => {
+      if (left.status === 'APPROVED' && right.status !== 'APPROVED') return -1
+      if (right.status === 'APPROVED' && left.status !== 'APPROVED') return 1
+      return String(right.appliedAt || '').localeCompare(String(left.appliedAt || ''))
+    })
+    return linked[0] || null
   }
 
   async function listOrganizationApplications() {
-    const items = await scanAll(() => ({
-      TableName: organizationApplicationsTable,
-      ConsistentRead: true,
-    }))
-    return items.sort((left, right) =>
+    const [legacyItems, publicItems] = await Promise.all([
+      scanAll(() => ({
+        TableName: organizationApplicationsTable,
+        ConsistentRead: true,
+      })),
+      listPublicOrganizationApplications(),
+    ])
+    return [
+      ...legacyItems.map((item) => ({
+        ...item,
+        isLegacy: true,
+        applicationId: item.userSub,
+        applicantEmail: item.officialEmail,
+      })),
+      ...publicItems,
+    ].sort((left, right) =>
       String(left.appliedAt || '').localeCompare(String(right.appliedAt || '')),
     )
+  }
+
+  async function getPublicOrganizationApplication(applicationId) {
+    const result = await ddb.send(
+      new GetCommand({
+        TableName: publicOrganizationApplicationsTable,
+        Key: { applicationId },
+        ConsistentRead: true,
+      }),
+    )
+    return result.Item || null
+  }
+
+  async function listPublicOrganizationApplications() {
+    return scanAll(() => ({
+      TableName: publicOrganizationApplicationsTable,
+      ConsistentRead: true,
+    }))
+  }
+
+  async function listPublicOrganizationApplicationsByCognitoSub(cognitoSub) {
+    if (!cognitoSub) return []
+    return queryAll(() => ({
+      TableName: publicOrganizationApplicationsTable,
+      IndexName: organizationApplicationsCognitoSubIndex,
+      KeyConditionExpression: '#cognitoSub = :cognitoSub',
+      ExpressionAttributeNames: { '#cognitoSub': 'cognitoSub' },
+      ExpressionAttributeValues: { ':cognitoSub': cognitoSub },
+    }))
+  }
+
+  async function createPendingOrganizationApplication(values, { passwordExpiresAt } = {}) {
+    const duplicateKey = duplicateKeyForApplication(values)
+    const lockResult = await ddb.send(
+      new GetCommand({
+        TableName: organizationApplicationLocksTable,
+        Key: { duplicateKey },
+        ConsistentRead: true,
+      }),
+    )
+    const previousLock = lockResult.Item || null
+    if (previousLock && previousLock.status !== 'REJECTED') {
+      throw new StoreError(CODES.ORGANIZATION_APPLICATION_EXISTS)
+    }
+
+    const now = new Date().toISOString()
+    const application = {
+      ...values,
+      applicationId: randomUUID(),
+      duplicateKey,
+      status: 'PENDING_APPROVAL',
+      passwordExpiresAt,
+      appliedAt: now,
+      updatedAt: now,
+      auditLog: [{ action: 'SUBMITTED', at: now, actorSub: 'PUBLIC' }],
+    }
+
+    const putApplication = {
+      TableName: publicOrganizationApplicationsTable,
+      Item: application,
+      ConditionExpression: 'attribute_not_exists(#applicationId)',
+      ExpressionAttributeNames: { '#applicationId': 'applicationId' },
+    }
+    const lockWrite = previousLock
+      ? {
+          Update: {
+            TableName: organizationApplicationLocksTable,
+            Key: { duplicateKey },
+            UpdateExpression:
+              'SET #applicationId = :applicationId, #status = :status, #updatedAt = :updatedAt',
+            ConditionExpression:
+              '#applicationId = :previousApplicationId AND #status = :rejected',
+            ExpressionAttributeNames: {
+              '#applicationId': 'applicationId',
+              '#status': 'status',
+              '#updatedAt': 'updatedAt',
+            },
+            ExpressionAttributeValues: {
+              ':applicationId': application.applicationId,
+              ':status': application.status,
+              ':updatedAt': now,
+              ':previousApplicationId': previousLock.applicationId,
+              ':rejected': 'REJECTED',
+            },
+          },
+        }
+      : {
+          Put: {
+            TableName: organizationApplicationLocksTable,
+            Item: {
+              duplicateKey,
+              applicationId: application.applicationId,
+              status: application.status,
+              updatedAt: now,
+            },
+            ConditionExpression: 'attribute_not_exists(#duplicateKey)',
+            ExpressionAttributeNames: { '#duplicateKey': 'duplicateKey' },
+          },
+        }
+
+    try {
+      await ddb.send(new TransactWriteCommand({
+        TransactItems: [{ Put: putApplication }, lockWrite],
+      }))
+      return { ...application }
+    } catch (err) {
+      const currentLock = await ddb.send(
+        new GetCommand({
+          TableName: organizationApplicationLocksTable,
+          Key: { duplicateKey },
+          ConsistentRead: true,
+        }),
+      )
+      if (currentLock.Item && currentLock.Item.status !== 'REJECTED') {
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_EXISTS)
+      }
+      if (err && err.name === 'TransactionCanceledException') {
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+      }
+      throw err
+    }
+  }
+
+  async function deletePendingOrganizationApplication(applicationId) {
+    const application = await getPublicOrganizationApplication(applicationId)
+    if (
+      !application
+      || application.status !== 'PENDING_APPROVAL'
+      || application.cognitoSub
+    ) return false
+
+    try {
+      await ddb.send(new TransactWriteCommand({
+        TransactItems: [
+          {
+            Delete: {
+              TableName: publicOrganizationApplicationsTable,
+              Key: { applicationId },
+              ConditionExpression:
+                'attribute_exists(#applicationId) AND #status = :pending AND attribute_not_exists(#cognitoSub)',
+              ExpressionAttributeNames: {
+                '#applicationId': 'applicationId',
+                '#status': 'status',
+                '#cognitoSub': 'cognitoSub',
+              },
+              ExpressionAttributeValues: { ':pending': 'PENDING_APPROVAL' },
+            },
+          },
+          {
+            Delete: {
+              TableName: organizationApplicationLocksTable,
+              Key: { duplicateKey: application.duplicateKey },
+              ConditionExpression:
+                '#applicationId = :applicationId AND #status = :pending',
+              ExpressionAttributeNames: {
+                '#applicationId': 'applicationId',
+                '#status': 'status',
+              },
+              ExpressionAttributeValues: {
+                ':applicationId': applicationId,
+                ':pending': 'PENDING_APPROVAL',
+              },
+            },
+          },
+        ],
+      }))
+      return true
+    } catch (err) {
+      if (err && err.name === 'TransactionCanceledException') return false
+      throw err
+    }
+  }
+
+  async function updatePublicOrganizationApplication(applicationId, updates, expectedStatuses) {
+    const current = await getPublicOrganizationApplication(applicationId)
+    if (!current) return null
+    if (!expectedStatuses.includes(current.status)) {
+      throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+    }
+
+    const { auditEntry, ...fields } = updates
+    const now = new Date().toISOString()
+    const names = {
+      '#applicationId': 'applicationId',
+      '#status': 'status',
+      '#updatedAt': 'updatedAt',
+      '#auditLog': 'auditLog',
+    }
+    const values = {
+      ':status': fields.status,
+      ':updatedAt': now,
+      ':empty': [],
+      ':auditEntry': [auditEntry],
+    }
+    const assignments = [
+      '#status = :status',
+      '#updatedAt = :updatedAt',
+      '#auditLog = list_append(if_not_exists(#auditLog, :empty), :auditEntry)',
+    ]
+    for (const [field, value] of Object.entries(fields)) {
+      if (field === 'status') continue
+      const nameKey = `#field${Object.keys(names).length}`
+      const valueKey = `:field${Object.keys(values).length}`
+      names[nameKey] = field
+      values[valueKey] = value
+      assignments.push(`${nameKey} = ${valueKey}`)
+    }
+    const expectedKeys = expectedStatuses.map((status, index) => {
+      const key = `:expected${index}`
+      values[key] = status
+      return key
+    })
+    try {
+      await ddb.send(new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: publicOrganizationApplicationsTable,
+              Key: { applicationId },
+              UpdateExpression: `SET ${assignments.join(', ')}`,
+              ConditionExpression:
+                `attribute_exists(#applicationId) AND #status IN (${expectedKeys.join(', ')})`,
+              ExpressionAttributeNames: names,
+              ExpressionAttributeValues: values,
+            },
+          },
+          {
+            Update: {
+              TableName: organizationApplicationLocksTable,
+              Key: { duplicateKey: current.duplicateKey },
+              UpdateExpression: 'SET #status = :status, #updatedAt = :updatedAt',
+              ConditionExpression:
+                '#applicationId = :applicationId AND #status IN (' +
+                expectedKeys.join(', ') +
+                ')',
+              ExpressionAttributeNames: {
+                '#applicationId': 'applicationId',
+                '#status': 'status',
+                '#updatedAt': 'updatedAt',
+              },
+              ExpressionAttributeValues: {
+                ':applicationId': applicationId,
+                ':status': fields.status,
+                ':updatedAt': now,
+                ...Object.fromEntries(expectedKeys.map((key) => [key, values[key]])),
+              },
+            },
+          },
+        ],
+      }))
+      return getPublicOrganizationApplication(applicationId)
+    } catch (err) {
+      if (err && err.name === 'TransactionCanceledException') {
+        const latest = await getPublicOrganizationApplication(applicationId)
+        if (!latest) return null
+        throw new StoreError(CODES.ORGANIZATION_APPLICATION_CONFLICT)
+      }
+      throw err
+    }
   }
 
   async function createOrganizationApplication(values) {
@@ -614,6 +908,11 @@ function createDynamoStore(options = {}) {
     createOrganizationApplication,
     reapplyOrganizationApplication,
     updateOrganizationApplicationStatus,
+    createPendingOrganizationApplication,
+    deletePendingOrganizationApplication,
+    getPublicOrganizationApplication,
+    listPublicOrganizationApplicationsByCognitoSub,
+    updatePublicOrganizationApplication,
     reset,
   }
 }

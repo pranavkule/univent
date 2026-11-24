@@ -6,14 +6,14 @@ import { useAuth } from '../components/AuthProvider.jsx'
 import { listEvents, listRegistrations } from '../services/api.js'
 import { getRemainingSeats } from '../services/eventAvailability.js'
 import { filterEvents, sortByDate } from '../services/eventFilter.js'
-import { eventCategories as mockCategories } from '../services/eventCategories.js'
+import { eventCategories } from '../services/eventCategories.js'
 import {
   loadStudentRegistrationStatus,
   registrationStatusView,
 } from '../services/registrationStatus.js'
 
 function initialCategory(param) {
-  return param && mockCategories.includes(param) ? param : 'All'
+  return param && eventCategories.includes(param) ? param : 'All'
 }
 
 // Explore events with search, availability filters, date sorting, and

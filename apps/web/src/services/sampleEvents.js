@@ -1,6 +1,6 @@
 import { eventCategories } from './eventCategories.js'
 
-export const mockEvents = [
+export const sampleEvents = [
   {
     eventId: 'e1',
     title: 'Hack Night',
@@ -94,4 +94,4 @@ export const mockEvents = [
   },
 ]
 
-export const mockCategories = eventCategories
+export const sampleCategories = eventCategories

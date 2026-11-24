@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import OrgStatusBadge, { statusLabel } from '../../components/OrgStatusBadge.jsx'
 import { ORG_APPROVAL_STATUSES, listOrganizations, setOrganizationStatus } from '../../services/organizations.js'
-import { API_MODE } from '../../services/api.js'
 
-// Organization management: review applications and apply confirmed admin
-// decisions through the live API or the isolated local mock store.
 export default function AdminOrganizations() {
   const [orgs, setOrgs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -27,7 +24,7 @@ export default function AdminOrganizations() {
     let cancelled = false
     refresh()
       .catch((err) => {
-        if (!cancelled) setError(err.message || 'Could not load organizations.')
+        if (!cancelled) setError(err.message || 'Could not load organization applications.')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -42,147 +39,205 @@ export default function AdminOrganizations() {
     return orgs.filter((o) => {
       if (statusFilter !== 'all' && o.approvalStatus !== statusFilter) return false
       if (!q) return true
-      return `${o.name} ${o.contactEmail} ${o.contactName || ''}`.toLowerCase().includes(q)
+      return [
+        o.name,
+        o.contactEmail,
+        o.officialEmail,
+        o.contactName,
+        o.department,
+        o.representativeTitle,
+      ].join(' ').toLowerCase().includes(q)
     })
   }, [orgs, query, statusFilter])
 
-  async function runAction(organization, status, confirmText, reasonValue = '') {
-    if (!window.confirm(confirmText)) return
-    const email = organization.contactEmail
-    setBusy(email)
+  async function runAction(application, action, confirmText, details = {}) {
+    if (confirmText && !window.confirm(confirmText)) return
+    setBusy(application.id)
     setNotice('')
     setError('')
     try {
-      await setOrganizationStatus(organization, status, reasonValue)
+      await setOrganizationStatus(application, action, details)
       await refresh()
-      setNotice(API_MODE === 'live'
-        ? `Organization application ${status}.`
-        : `Organization ${status}. Demo only — stored in this browser, not in AWS.`)
+      setNotice(`Application ${action.toLowerCase()} action completed.`)
       setRejectTarget(null)
       setReason('')
     } catch (err) {
-      setError(err.message || 'Action failed.')
+      setError(err.message || 'The application action failed.')
     } finally {
       setBusy(null)
     }
   }
 
-  function submitReject(e) {
-    e.preventDefault()
-    if (reason.trim().length < 3) {
-      setReasonError('Give a short reason (min 3 characters) so the organization knows what to fix.')
+  function submitReject(event) {
+    event.preventDefault()
+    if (reason.trim().length < 3 || reason.trim().length > 500) {
+      setReasonError('Enter a reason between 3 and 500 characters.')
       return
     }
     setReasonError('')
-    runAction(rejectTarget, 'rejected', `Reject the application from "${rejectTarget.name}"?`, reason.trim())
+    runAction(
+      rejectTarget,
+      'REJECT',
+      `Reject the application from "${rejectTarget.name}"?`,
+      { reason: reason.trim() },
+    )
   }
 
-  if (loading) return <div className="skeleton">Loading organizations…</div>
+  if (loading) return <div className="skeleton">Loading organization applications…</div>
 
   return (
     <>
       <p className="muted org-sub">
-        {orgs.length} organization application{orgs.length === 1 ? '' : 's'} on record.{' '}
-        {API_MODE === 'live' ? 'Loaded from the application API.' : 'Mock data — stored in this browser only.'}
+        {orgs.length} organization application{orgs.length === 1 ? '' : 's'} on record.
+        Accounts are created only after administrator approval; organization email OTP is not required.
       </p>
       {notice && <div className="alert alert-ok" role="status">{notice}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       <div className="toolbar" role="search">
-        <label className="visually-hidden" htmlFor="admin-orgs-search">Search organizations</label>
+        <label className="visually-hidden" htmlFor="admin-orgs-search">Search applications</label>
         <input
           id="admin-orgs-search"
           type="search"
-          placeholder="Search name, contact, or email…"
+          placeholder="Search organization, applicant, or email…"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(event) => setQuery(event.target.value)}
           className="org-search"
         />
         <label htmlFor="admin-orgs-status">Status</label>
-        <select id="admin-orgs-status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <select id="admin-orgs-status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
           <option value="all">All statuses</option>
-          {ORG_APPROVAL_STATUSES.map((s) => (
-            <option key={s} value={s}>{statusLabel(s)}</option>
+          {ORG_APPROVAL_STATUSES.map((status) => (
+            <option key={status} value={status}>{statusLabel(status)}</option>
           ))}
         </select>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="alert alert-empty">No organizations match your search or filter.</div>
+        <div className="alert alert-empty">No organization applications match your search or filter.</div>
       ) : (
         <div className="org-table-wrap">
           <table className="reg-table">
             <thead>
-              <tr><th>Organization</th><th>Contact</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr>
+              <tr><th>Organization and request</th><th>Applicant</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr>
             </thead>
             <tbody>
-              {filtered.map((o) => (
-                <tr key={o.id}>
+              {filtered.map((application) => (
+                <tr key={application.id}>
                   <td>
-                    {o.name}
+                    <strong>{application.name}</strong>
                     <br />
-                    <span className="muted">{o.description && o.description.length > 90 ? `${o.description.slice(0, 90)}…` : o.description}</span>
-                    {o.decisionReason && <br />}
-                    {o.decisionReason && <span className="muted">Decision: {o.decisionReason}</span>}
+                    <span className="muted">{application.department || 'Department/category not supplied'}</span>
+                    {application.officialEmail && (
+                      <><br /><span className="muted">Official email: {application.officialEmail}</span></>
+                    )}
+                    {application.reason && (
+                      <><br /><span className="muted">Request: {application.reason}</span></>
+                    )}
+                    {application.verificationNotes && (
+                      <><br /><span className="muted">Verification notes: {application.verificationNotes}</span></>
+                    )}
+                    {application.decisionReason && (
+                      <><br /><span className="muted">Decision: {application.decisionReason}</span></>
+                    )}
+                    {application.appliedAt && (
+                      <><br /><span className="muted">Applied: {application.appliedAt.slice(0, 10)}</span></>
+                    )}
                   </td>
                   <td>
-                    {o.contactName || '—'}
-                    {o.representativeTitle && <><br /><span className="muted">{o.representativeTitle}</span></>}
-                    {o.representativePhone && <><br /><span className="muted">{o.representativePhone}</span></>}
-                    <br />
-                    <span className="muted">{o.contactEmail}</span>
+                    {application.contactName || '—'}
+                    {application.representativeTitle && (
+                      <><br /><span className="muted">{application.representativeTitle}</span></>
+                    )}
+                    <br /><span className="muted">{application.contactEmail || '—'}</span>
                   </td>
-                  <td><OrgStatusBadge status={o.approvalStatus} /></td>
+                  <td><OrgStatusBadge status={application.approvalStatus} /></td>
                   <td className="org-actions">
-                    {o.approvalStatus === 'pending' && (
+                    {application.approvalStatus === 'pending_verification' && (
                       <>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={decisionInProgress}
-                          onClick={() => runAction(o, 'approved', `Approve "${o.name}" as an organization?`)}
-                        >
-                          {busy === o.contactEmail ? 'Working…' : 'Approve'}
-                        </button>
+                        <span className="muted">Historical application; request a new application to provision a separate account.</span>
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
                           disabled={decisionInProgress}
-                          onClick={() => { setRejectTarget(o); setReason(''); setReasonError(''); setNotice('') }}
+                          onClick={() => { setRejectTarget(application); setReason(''); setReasonError(''); setNotice('') }}
                         >
                           Reject
                         </button>
                       </>
                     )}
-                    {o.approvalStatus === 'approved' && (
+                    {application.approvalStatus === 'pending_approval' && application.canApprove && !application.isLegacy && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={decisionInProgress}
+                          onClick={() => runAction(
+                            application,
+                            'APPROVE',
+                            `Create and enable a separate Cognito account for "${application.officialEmail}"?`,
+                          )}
+                        >
+                          {busy === application.id ? 'Working…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={decisionInProgress}
+                          onClick={() => { setRejectTarget(application); setReason(''); setReasonError(''); setNotice('') }}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {['pending', 'pending_approval'].includes(application.approvalStatus)
+                      && (!application.canApprove || application.isLegacy) && (
+                      <>
+                        <span className="muted">Secure password setup is unavailable or expired; request a new application.</span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={decisionInProgress}
+                          onClick={() => { setRejectTarget(application); setReason(''); setReasonError(''); setNotice('') }}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {application.approvalStatus === 'approved' && (
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
                         disabled={decisionInProgress}
-                        onClick={() => runAction(o, 'suspended', `Suspend "${o.name}"? Organization API access will be revoked.`)}
+                        onClick={() => runAction(
+                          application,
+                          'SUSPEND',
+                          `Suspend access for "${application.name}"?`,
+                          { reason: 'Suspended by administrator.' },
+                        )}
                       >
-                        {busy === o.contactEmail ? 'Working…' : 'Suspend'}
+                        Suspend
                       </button>
                     )}
-                    {o.approvalStatus === 'suspended' && (
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        disabled={decisionInProgress}
-                        onClick={() => runAction(o, 'approved', `Reactivate "${o.name}"?`)}
-                      >
-                        {busy === o.contactEmail ? 'Working…' : 'Reactivate'}
-                      </button>
-                    )}
-                    {o.approvalStatus === 'rejected' && (
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        disabled={decisionInProgress}
-                        onClick={() => runAction(o, 'approved', `Approve "${o.name}" after all?`)}
-                      >
-                        {busy === o.contactEmail ? 'Working…' : 'Approve'}
-                      </button>
+                    {application.approvalStatus === 'suspended' && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={decisionInProgress}
+                          onClick={() => runAction(application, 'SUSPEND', 'Retry removal of organization access?')}
+                        >
+                          Retry revocation
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={decisionInProgress}
+                          onClick={() => runAction(application, 'REACTIVATE', `Reactivate "${application.name}"?`)}
+                        >
+                          Reactivate
+                        </button>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -195,22 +250,22 @@ export default function AdminOrganizations() {
       {rejectTarget && (
         <form className="detail" onSubmit={submitReject} aria-label={`Reject ${rejectTarget.name}`}>
           <h3>Reject “{rejectTarget.name}”</h3>
-          <p className="muted">A reason is required so the organization knows what to fix.</p>
+          <p className="muted">A reason is required and will be included in the application record.</p>
           <div className="field">
             <label htmlFor="admin-reject-reason">Reason for rejection</label>
             <textarea
               id="admin-reject-reason"
               rows="3"
+              maxLength="500"
               value={reason}
               disabled={decisionInProgress}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Missing faculty advisor details"
+              onChange={(event) => setReason(event.target.value)}
             />
             {reasonError && <span className="field-error" role="alert">{reasonError}</span>}
           </div>
           <div className="org-form-actions">
             <button type="submit" className="btn" disabled={decisionInProgress}>
-              {busy === rejectTarget.contactEmail ? 'Rejecting…' : 'Confirm rejection'}
+              {busy === rejectTarget.id ? 'Rejecting…' : 'Confirm rejection'}
             </button>
             <button type="button" className="btn btn-secondary" disabled={decisionInProgress} onClick={() => { setRejectTarget(null); setReason('') }}>
               Cancel

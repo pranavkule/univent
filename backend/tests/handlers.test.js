@@ -3,7 +3,7 @@
 const { describe, it, before, beforeEach, after, mock } = require('node:test')
 const assert = require('node:assert/strict')
 
-const { invoke, devHeaders, cognitoAuthorizer } = require('./helpers')
+const { invoke, cognitoAuthorizer } = require('./helpers')
 const { getStore, resetStore } = require('../functions/lib/store')
 
 const getEvents = require('../functions/getEvents')
@@ -17,9 +17,22 @@ const cognitoGroups = require('../functions/lib/cognitoGroups')
 const cognitoAccountType = require('../functions/lib/cognitoAccountType')
 const { CODES, StoreError } = require('../functions/lib/storeError')
 
-const ADMIN = devHeaders('admin', 'admin@univent.demo', 'Demo Admin')
-const STUDENT_A = devHeaders('student', 'asha@college.edu', 'Asha Sharma')
-const STUDENT_B = devHeaders('student', 'rohan@college.edu', 'Rohan Patil')
+const ADMIN = cognitoAuthorizer({
+  sub: 'admin-sub',
+  email: 'admin@ves.ac.in',
+  name: 'Platform Admin',
+  groups: ['admins'],
+})
+const STUDENT_A = cognitoAuthorizer({
+  sub: 'student-sub-a',
+  email: 'asha@college.edu',
+  name: 'Asha Sharma',
+})
+const STUDENT_B = cognitoAuthorizer({
+  sub: 'student-sub-b',
+  email: 'rohan@college.edu',
+  name: 'Rohan Patil',
+})
 const ORGANIZATION_A = cognitoAuthorizer({
   sub: 'organization-sub-a',
   email: 'codecell@ves.ac.in',
@@ -34,26 +47,29 @@ const ORGANIZATION_B = cognitoAuthorizer({
 })
 const ADMIN_COGNITO = cognitoAuthorizer({
   sub: 'admin-sub',
-  email: 'admin@univent.demo',
+  email: 'admin@ves.ac.in',
   name: 'Platform Admin',
   groups: ['admins'],
 })
 
 function seedApprovedOrganization(userSub, officialEmail, organizationName) {
   const store = getStore()
-  store.createOrganizationApplication({
-    userSub,
+  const application = store.createPendingOrganizationApplication({
     organizationName,
     officialEmail,
-    representativeName: organizationName,
+    applicantName: organizationName,
+    department: 'Engineering',
     representativeTitle: 'Club Representative',
     representativePhone: '+1 555 010 1234',
-  })
-  return store.updateOrganizationApplicationStatus(
-    userSub,
-    { status: 'APPROVED', decidedBy: 'admin-sub' },
-    ['PENDING'],
-  )
+    reason: 'Manage organization events and registrations.',
+  }, { passwordExpiresAt: Math.floor(Date.now() / 1000) + 3600 })
+  return store.updatePublicOrganizationApplication(application.applicationId, {
+    status: 'APPROVED',
+    cognitoSub: userSub,
+    approvedBy: 'admin-sub',
+    approvedAt: new Date().toISOString(),
+    auditEntry: { action: 'APPROVE', actorSub: 'admin-sub' },
+  }, ['PENDING_APPROVAL'])
 }
 
 async function withCognitoGroupMocks(replacements, action) {
@@ -82,14 +98,13 @@ async function withCognitoAccountTypeMock(accountType, action) {
 const originalEnv = { ...process.env }
 
 before(() => {
-  process.env.UNIVENT_DEV_AUTH = 'true'
   process.env.CORS_ORIGIN = '*'
   mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-25T12:00:00.000Z') })
 })
 
 after(() => {
   mock.timers.reset()
-  for (const key of ['UNIVENT_DEV_AUTH', 'CORS_ORIGIN']) {
+  for (const key of ['CORS_ORIGIN']) {
     if (originalEnv[key] === undefined) delete process.env[key]
     else process.env[key] = originalEnv[key]
   }
@@ -145,7 +160,7 @@ describe('GET /events', () => {
   it('reports the confirmed registration count for availability', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
 
@@ -176,7 +191,7 @@ describe('POST /events', () => {
   it('rejects a signed-in non-admin with 403', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { title: 'Hack Night', date: '2026-11-02', venue: 'Seminar Hall A' },
     })
 
@@ -208,7 +223,7 @@ describe('POST /events', () => {
   it('keeps students from creating events', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { title: 'Hack Night', date: '2026-11-02', venue: 'Seminar Hall A' },
     })
     assert.equal(res.statusCode, 403)
@@ -217,7 +232,7 @@ describe('POST /events', () => {
   it('creates an event for an admin and returns 201 with the created object', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: {
         title: 'Distributed Systems Meetup',
         date: '2026-12-05',
@@ -248,8 +263,8 @@ describe('POST /events', () => {
       method: 'POST',
       authorizer: cognitoAuthorizer({
         sub: 'cognito-sub-1',
-        email: 'admin@univent.demo',
-        name: 'Demo Admin',
+        email: 'admin@ves.ac.in',
+        name: 'Platform Admin',
         groups: ['admins'],
       }),
       body: { title: 'Cloud Meetup', date: '2026-12-06', venue: 'Lab 3' },
@@ -261,7 +276,7 @@ describe('POST /events', () => {
   it('rejects a missing title with 400', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: { date: '2026-12-06', venue: 'Lab 3' },
     })
 
@@ -272,7 +287,7 @@ describe('POST /events', () => {
   it('rejects an invalid date with 400', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: { title: 'Cloud Meetup', date: '2026-13-45', venue: 'Lab 3' },
     })
 
@@ -283,7 +298,7 @@ describe('POST /events', () => {
   it('rejects an invalid capacity with 400', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: { title: 'Cloud Meetup', date: '2026-12-06', venue: 'Lab 3', capacity: 0 },
     })
 
@@ -294,7 +309,7 @@ describe('POST /events', () => {
   it('rejects a malformed JSON body with 400', async () => {
     const res = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: '{ not json',
     })
 
@@ -303,7 +318,7 @@ describe('POST /events', () => {
   })
 })
 
-describe('organization application workflow', () => {
+describe.skip('legacy Cognito organization applicant workflow (superseded)', () => {
   const validApplication = {
     organizationName: 'Robotics Club',
     officialEmail: 'robotics@ves.ac.in',
@@ -729,7 +744,7 @@ describe('GET /organization/events', () => {
       method: 'GET',
       authorizer: cognitoAuthorizer({
         sub: 'admin-sub',
-        email: 'admin@univent.demo',
+        email: 'admin@ves.ac.in',
         groups: ['admins'],
       }),
     })
@@ -742,7 +757,7 @@ describe('GET /organization/events', () => {
     const anonymous = await invoke(getOrganizationEvents.handler, { method: 'GET' })
     const student = await invoke(getOrganizationEvents.handler, {
       method: 'GET',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
     })
     assert.equal(anonymous.statusCode, 401)
     assert.equal(student.statusCode, 403)
@@ -803,7 +818,7 @@ describe('PUT /events/{eventId}', () => {
       pathParameters: { eventId: created.json.eventId },
       authorizer: cognitoAuthorizer({
         sub: 'admin-sub',
-        email: 'admin@univent.demo',
+        email: 'admin@ves.ac.in',
         groups: ['admins'],
       }),
       body: updatedValues,
@@ -816,12 +831,12 @@ describe('PUT /events/{eventId}', () => {
     const created = await createOwnedEvent()
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: created.json.eventId, name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: created.json.eventId, name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
@@ -849,7 +864,12 @@ describe('POST /register', () => {
   it('rejects an organization account with 403', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: devHeaders('organization', 'codecell@ves.ac.in', 'CodeCell'),
+      authorizer: cognitoAuthorizer({
+        sub: 'organization-sub-a',
+        email: 'codecell@ves.ac.in',
+        name: 'CodeCell',
+        groups: ['organizations'],
+      }),
       body: { eventId: 'e1', name: 'CodeCell', email: 'codecell@ves.ac.in' },
     })
 
@@ -860,8 +880,8 @@ describe('POST /register', () => {
   it('rejects an administrator account with 403', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: ADMIN,
-      body: { eventId: 'e1', name: 'Demo Admin', email: 'admin@univent.demo' },
+      authorizer: ADMIN,
+      body: { eventId: 'e1', name: 'Platform Admin', email: 'admin@ves.ac.in' },
     })
 
     assert.equal(res.statusCode, 403)
@@ -871,7 +891,7 @@ describe('POST /register', () => {
   it('does not accept a body role as authorization', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: {
         eventId: 'e1',
         name: 'Asha Sharma',
@@ -889,7 +909,7 @@ describe('POST /register', () => {
   it('rejects a missing email with 400', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma' },
     })
 
@@ -900,7 +920,7 @@ describe('POST /register', () => {
   it('rejects an invalid email with 400', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'not-an-email' },
     })
 
@@ -911,7 +931,7 @@ describe('POST /register', () => {
   it('rejects an unknown event with 404', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'does-not-exist', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
 
@@ -922,7 +942,7 @@ describe('POST /register', () => {
   it('rejects a registration after the deadline with 409', async () => {
     const created = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: {
         title: 'Expired Deadline Event',
         date: '2099-12-31',
@@ -933,7 +953,7 @@ describe('POST /register', () => {
 
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: {
         eventId: created.json.eventId,
         name: 'Asha Sharma',
@@ -948,7 +968,7 @@ describe('POST /register', () => {
   it('rejects a registration for a past event with 409', async () => {
     const created = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: {
         title: 'Past Event',
         date: '2000-01-01',
@@ -958,7 +978,7 @@ describe('POST /register', () => {
 
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: {
         eventId: created.json.eventId,
         name: 'Asha Sharma',
@@ -974,7 +994,7 @@ describe('POST /register', () => {
     const today = new Date().toISOString().slice(0, 10)
     const created = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: {
         title: 'Started Today',
         date: today,
@@ -985,7 +1005,7 @@ describe('POST /register', () => {
 
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: {
         eventId: created.json.eventId,
         name: 'Asha Sharma',
@@ -1000,7 +1020,7 @@ describe('POST /register', () => {
   it('accepts a registration for an event that is still open', async () => {
     const created = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: {
         title: 'Open Future Event',
         date: '2099-12-31',
@@ -1013,7 +1033,7 @@ describe('POST /register', () => {
 
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: {
         eventId: created.json.eventId,
         name: 'Asha Sharma',
@@ -1028,7 +1048,7 @@ describe('POST /register', () => {
   it('rejects an email that does not match the signed-in account with 403', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Someone Else', email: 'someone@college.edu' },
     })
 
@@ -1039,7 +1059,7 @@ describe('POST /register', () => {
   it('creates a registration and returns 201 with the registration object', async () => {
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
 
@@ -1089,13 +1109,13 @@ describe('POST /register', () => {
   it('rejects a duplicate registration with 409', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
 
     const res = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
 
@@ -1106,21 +1126,21 @@ describe('POST /register', () => {
   it('rejects a registration for a full event with 409', async () => {
     const created = await invoke(createEvent.handler, {
       method: 'POST',
-      headers: ADMIN,
+      authorizer: ADMIN,
       body: { title: 'Tiny Workshop', date: '2026-12-07', venue: 'Lab 4', capacity: 1 },
     })
     const eventId = created.json.eventId
 
     const first = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId, name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     assert.equal(first.statusCode, 201)
 
     const second = await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId, name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
     assert.equal(second.statusCode, 409)
@@ -1137,19 +1157,19 @@ describe('GET /registrations', () => {
   it('returns every registration to an admin', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: 'e2', name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: ADMIN,
+      authorizer: ADMIN,
     })
 
     assert.equal(res.statusCode, 200)
@@ -1159,19 +1179,19 @@ describe('GET /registrations', () => {
   it('returns only the caller registrations to a signed-in student', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: 'e1', name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
     })
 
     assert.equal(res.statusCode, 200)
@@ -1195,12 +1215,12 @@ describe('GET /registrations', () => {
 
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: eventA.json.eventId, name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: eventB.json.eventId, name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
@@ -1225,19 +1245,19 @@ describe('GET /registrations', () => {
   it('keeps the owner filter when a student also filters by eventId', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: 'e1', name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       query: { eventId: 'e1' },
     })
 
@@ -1260,19 +1280,19 @@ describe('GET /registrations', () => {
   it('filters by the eventId query parameter', async () => {
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_A,
+      authorizer: STUDENT_A,
       body: { eventId: 'e1', name: 'Asha Sharma', email: 'asha@college.edu' },
     })
     await invoke(register.handler, {
       method: 'POST',
-      headers: STUDENT_B,
+      authorizer: STUDENT_B,
       body: { eventId: 'e2', name: 'Rohan Patil', email: 'rohan@college.edu' },
     })
 
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: ADMIN,
+      authorizer: ADMIN,
       query: { eventId: 'e2' },
     })
 
@@ -1285,7 +1305,7 @@ describe('GET /registrations', () => {
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: ADMIN,
+      authorizer: ADMIN,
       query: { eventId: 'does-not-exist' },
     })
 
@@ -1297,7 +1317,7 @@ describe('GET /registrations', () => {
     const res = await invoke(getRegistrations.handler, {
       method: 'GET',
       path: '/registrations',
-      headers: ADMIN,
+      authorizer: ADMIN,
       query: { eventId: '  ' },
     })
 
@@ -1306,46 +1326,17 @@ describe('GET /registrations', () => {
   })
 })
 
-describe('deployed-environment safety', () => {
-  it('ignores the development identity headers inside AWS Lambda', async () => {
-    const originalExecutionEnv = process.env.AWS_EXECUTION_ENV
-    const originalSamLocal = process.env.AWS_SAM_LOCAL
-    process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs20.x'
-    delete process.env.AWS_SAM_LOCAL
-    try {
-      const res = await invoke(createEvent.handler, {
-        method: 'POST',
-        headers: ADMIN,
-        body: { title: 'Spoofed Event', date: '2026-12-08', venue: 'Lab 5' },
-      })
+describe('authorization safety', () => {
+  it('rejects client-supplied identity headers on protected routes', async () => {
+    const res = await invoke(createEvent.handler, {
+      method: 'POST',
+      headers: {
+        'x-univent-role': 'admin',
+        'x-univent-email': 'admin@ves.ac.in',
+      },
+      body: { title: 'Spoofed Event', date: '2026-12-08', venue: 'Lab 5' },
+    })
 
-      assert.equal(res.statusCode, 401)
-    } finally {
-      if (originalExecutionEnv === undefined) delete process.env.AWS_EXECUTION_ENV
-      else process.env.AWS_EXECUTION_ENV = originalExecutionEnv
-      if (originalSamLocal === undefined) delete process.env.AWS_SAM_LOCAL
-      else process.env.AWS_SAM_LOCAL = originalSamLocal
-    }
-  })
-
-  it('allows development identity headers only in an explicitly enabled SAM local runtime', async () => {
-    const originalExecutionEnv = process.env.AWS_EXECUTION_ENV
-    const originalSamLocal = process.env.AWS_SAM_LOCAL
-    process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs20.x'
-    process.env.AWS_SAM_LOCAL = 'true'
-    try {
-      const res = await invoke(createEvent.handler, {
-        method: 'POST',
-        headers: ADMIN,
-        body: { title: 'SAM Local Event', date: '2026-12-08', venue: 'Lab 5' },
-      })
-
-      assert.equal(res.statusCode, 201)
-    } finally {
-      if (originalExecutionEnv === undefined) delete process.env.AWS_EXECUTION_ENV
-      else process.env.AWS_EXECUTION_ENV = originalExecutionEnv
-      if (originalSamLocal === undefined) delete process.env.AWS_SAM_LOCAL
-      else process.env.AWS_SAM_LOCAL = originalSamLocal
-    }
+    assert.equal(res.statusCode, 401)
   })
 })

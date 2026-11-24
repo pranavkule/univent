@@ -8,7 +8,7 @@ export default function AdminRoute({ children }) {
   const { user } = useAuth()
   const location = useLocation()
   if (!user) {
-    return <Navigate to="/signin" replace state={{ from: location.pathname }} />
+    return <Navigate to="/admin/signin" replace state={{ from: location.pathname }} />
   }
   if ((user.role || '').toLowerCase() !== 'admin') {
     return <Navigate to="/events" replace />

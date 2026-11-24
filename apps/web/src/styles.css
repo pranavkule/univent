@@ -49,10 +49,8 @@
   --shadow-md: 0 1px 2px rgba(23, 32, 58, 0.05), 0 12px 32px rgba(23, 32, 58, 0.1);
 }
 
-/* Workspace layout shell: the Org/Admin dashboards open up to (nearly) the
-   full viewport, and the navbar follows the same width + padding rhythm while
-   those dashboards are mounted, so header and content stay aligned. Regular
-   pages keep their existing readable container width. */
+/* Shared wide shell for workspace pages, landing content, and navigation.
+   Regular page content keeps its existing readable container width. */
 :root {
   --workspace-width: 1920px;
   --workspace-pad-x: clamp(1rem, 2.5vw, 2.5rem);
@@ -144,34 +142,14 @@ select:focus-visible {
 }
 
 .nav-inner {
-  max-width: 1160px;
+  max-width: var(--workspace-width);
   width: 100%;
   margin: 0 auto;
-  padding: 0.5rem 1.25rem;
+  padding: 0.5rem var(--workspace-pad-x);
   display: flex;
   align-items: center;
   gap: 0.75rem;
   min-height: 3.75rem;
-}
-
-.nav-inner-student {
-  width: 96%;
-  max-width: 1600px;
-  padding-inline: clamp(1rem, 2vw, 2rem);
-}
-
-/* On Org/Admin workspaces the header expands to the same shell as the
-   dashboard, keeping the logo and tools aligned with the content below. */
-body:has(.org-shell) .nav-inner {
-  max-width: var(--workspace-width);
-  padding-inline: var(--workspace-pad-x);
-}
-
-/* On the landing page the header matches the wider landing shell so the logo,
-   links and theme toggle line up with the hero and section content. */
-body:has(.landing) .nav-inner {
-  max-width: var(--landing-width);
-  padding-inline: var(--landing-pad-x);
 }
 
 .brand {
@@ -994,19 +972,12 @@ section[aria-labelledby='why-heading'] > h2 { margin: 0.4rem 0 0; font-size: cla
 .footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
 .footer ul a { text-decoration: none; color: var(--ink); }
 .footer ul a:hover { color: var(--brand-dark); }
-.mock-note { margin: 0; padding: 1.25rem 0 1.5rem; color: var(--muted); font-size: 0.85rem; text-align: center; border-top: 1px solid var(--line); }
+.footer-note { margin: 0; padding: 1.25rem 0 1.5rem; color: var(--muted); font-size: 0.85rem; text-align: center; border-top: 1px solid var(--line); }
 
-/* Keep the shared footer on its existing shell; the landing page overrides it below. */
+/* Keep the shared footer aligned to the same readable shell on every page. */
 .footer .container {
   width: auto;
   max-width: 1160px;
-}
-
-/* Keep the landing footer aligned with the wider landing shell. */
-body:has(.landing) .footer .container {
-  width: 100%;
-  max-width: var(--landing-width);
-  padding-inline: var(--landing-pad-x);
 }
 
 /* ---------- Detail / forms / tables ---------- */
@@ -1049,6 +1020,11 @@ body:has(.landing) .footer .container {
 }
 .auth-main { min-width: 0; }
 .auth-main .form { margin: 0 auto; max-width: 520px; }
+
+@media (min-width: 961px) {
+  .auth-container { max-width: 640px; }
+  .auth-layout { grid-template-columns: minmax(0, 1fr); }
+}
 
 .demo-panel {
   background: linear-gradient(180deg, var(--card-2), var(--card));

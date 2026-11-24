@@ -1,10 +1,8 @@
 import { useAuth } from '../components/AuthProvider.jsx'
 
-// Student profile: read-only account information. The mock backend stores
-// only name/email/role, so there is nothing editable here yet — profile
-// editing will arrive with the real backend (Cognito/DynamoDB).
+// Student profile: read-only account information provided by Cognito.
 export default function StudentProfile() {
-  const { user, signOut, authMode } = useAuth()
+  const { user, signOut } = useAuth()
 
   async function handleSignOut() {
     await signOut()
@@ -13,11 +11,7 @@ export default function StudentProfile() {
   return (
     <div className="container container-narrow">
       <h2>Profile</h2>
-      <p className="muted">
-        {authMode === 'mock'
-          ? 'Your account details. Mock data — stored in this browser only.'
-          : 'Your account details, provided by Cognito.'}
-      </p>
+      <p className="muted">Your account details, provided by Cognito.</p>
       <div className="detail">
         <dl className="facts">
           <div><dt>Name</dt><dd>{user?.name || '—'}</dd></div>

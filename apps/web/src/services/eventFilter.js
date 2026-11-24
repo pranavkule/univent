@@ -1,5 +1,5 @@
-// Shared mock-data filtering used by both the Events page and the
-// landing-page discovery section, so both views always agree.
+// Shared event filtering used by both the Events page and the landing-page
+// discovery section, so both views always agree.
 export function filterEvents(events, { query = '', category = 'All' } = {}) {
   const q = query.trim().toLowerCase()
   return (events || []).filter((e) => {

@@ -25,16 +25,6 @@ function proxyEvent({
   }
 }
 
-// Local development identity headers (only honoured when UNIVENT_DEV_AUTH
-// is enabled and the code is not running inside AWS Lambda).
-function devHeaders(role, email, name = 'Test User') {
-  return {
-    'x-univent-role': role,
-    'x-univent-email': email,
-    'x-univent-name': name,
-  }
-}
-
 // Cognito user pool authorizer claims (REST API shape).
 function cognitoAuthorizer({
   sub = 'test-sub',
@@ -70,4 +60,4 @@ async function invoke(handler, options = {}) {
   return { statusCode: result.statusCode, headers: result.headers, body: result.body, json: parsed }
 }
 
-module.exports = { proxyEvent, devHeaders, cognitoAuthorizer, cognitoJwtAuthorizer, invoke }
+module.exports = { proxyEvent, cognitoAuthorizer, cognitoJwtAuthorizer, invoke }

@@ -11,7 +11,7 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
 1. Swap frontend seam:
    - Replace mock implementation in `apps/web/src/services/api.js` with `fetch` against the API Gateway URL (env var, e.g. `VITE_API_URL`); keep function signatures unchanged.
    - Merge `getAuthHeaders()` from `services/auth.js` into protected requests so the Cognito ID token is sent as `Authorization: Bearer <idToken>`.
-   - Remove `mockEvents.js` usage from pages (keep the file for reference/tests).
+   - Keep static presentation samples separate from API-backed event records.
 2. Permissions:
    - `GET /events` public; students register for events; admins manage all
      events and registrations; approved organizations manage only events
@@ -28,16 +28,15 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
    - Treat `401` as "sign in again" and `403` as "this account cannot do that".
 4. End-to-end check locally:
    - `sam local start-api` + `npm run dev`; walk through: list → details → login → register → confirmation → admin view registrations.
-   - Use the mock auth mode for UI flow checks; the Cognito authorizer itself
-     requires a deployed stage for a real `401`/token check.
+   - Exercise public UI flows locally; protected API checks require a deployed
+     Cognito authorizer and valid ID token.
 
 ## Done when
 - Full flow works against the real API with auth on; unauthorized calls get `401/403`, bad input gets `400`.
 - No mock data in the happy path; no hardcoded URLs/secrets in git.
 
 ## Implemented locally
-- `services/api.js` selects `liveApi.js` or the browser-local mock seam with
-  `VITE_API_MODE`; live mode requires `VITE_API_URL`.
+- `services/api.js` uses `liveApi.js` and requires `VITE_API_URL`.
 - Protected calls use `getAuthHeaders()` from the existing auth facade.
 - Public event reads avoid protected registration calls; student registration
   history is loaded only for student accounts.
@@ -46,18 +45,21 @@ Goal: connect all modules, enforce permissions, configure error handling, verify
   unchanged.
 - Confirmation uses the created registration state and falls back to the
   signed-in student's history.
-- Cancellation is mock-only until a backend route exists; the live UI hides it.
+- Cancellation is unavailable until a backend route exists.
 - Admin event creation uses admin-only `POST /events`.
 - Organization applications, Admin review decisions, event creation/editing,
-  and registration viewing use the live APIs in live mode. Mock mode retains
-  browser-local demo behavior and is not production authorization or
-  persistence.
-- Organization application data is stored in `OrganizationApplicationsTable`;
-  Admin approval/rejection/suspension updates the state and synchronizes
-  Cognito group membership. Rejected/suspended records block organization API
-  access even when a token has a stale group claim.
-- Frontend tests use mocked HTTP for Cognito and local dev headers.
-- Remaining Phase 7 checks: deploy the application table and routes, verify
-  AWS Academy IAM permission for Cognito group add/remove, deployed API
-  URL/CORS, Cognito authorizer `401/403`, token refresh, and live end-to-end
-  application/approval verification.
+  and registration viewing use authenticated live APIs.
+- Event moderation and a user directory are not provided by the backend; the
+  Admin UI does not simulate either capability.
+- Organization applications use the official organization email and a
+  separate password. The new application and duplicate lock use separate
+  DynamoDB tables; the submitted password is held only as KMS ciphertext in
+  a TTL-backed secret table. Admin approval creates a separate Cognito
+  account without an email OTP; rejection preserves history and deletes the
+  secret. Rejected/suspended records block organization API access even
+  when a token has a stale group claim.
+- Frontend tests use mocked HTTP transport and Cognito ID-token headers.
+- Remaining Phase 7 checks: review and deploy the in-place stack update only
+  after confirming AWS Academy IAM permission for Cognito provisioning,
+  KMS/table access, group add/remove, API URL/CORS, Cognito authorizer
+  `401/403`, token refresh, and live end-to-end application/approval behavior.

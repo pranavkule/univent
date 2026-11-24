@@ -54,9 +54,11 @@ export default function App() {
             <Route path="/org/signup" element={<OrgSignUp />} />
             <Route path="/confirm-signup" element={<ConfirmSignUp />} />
             <Route path="/signin" element={<SignIn />} />
+            <Route path="/org/signin" element={<SignIn mode="organization" />} />
+            <Route path="/admin/signin" element={<SignIn mode="admin" />} />
             <Route
               path="/org/apply"
-              element={<ProtectedRoute roles={['student', 'organization']}><OrgApplication /></ProtectedRoute>}
+              element={<OrgRoute><OrgApplication /></OrgRoute>}
             />
             <Route
               path="/dashboard"

@@ -24,10 +24,6 @@ function recorder(status, payload) {
 }
 
 const cognitoHeaders = async () => ({ Authorization: 'Bearer id-token' })
-const devHeaders = async () => ({
-  'X-Univent-Role': 'student',
-  'X-Univent-Email': 'asha@ves.ac.in',
-})
 
 describe('live API transport', () => {
   it('loads public events without requesting auth headers', async () => {
@@ -119,11 +115,11 @@ describe('live API transport', () => {
     })
   })
 
-  it('supports dev identity headers and encodes the registration filter', async () => {
+  it('encodes the registration filter and sends Cognito authorization', async () => {
     const { calls, fetchImpl } = recorder(200, { registrations: [{ registrationId: 'reg-1' }] })
     const api = createLiveApi({
       baseUrl: 'https://api.example.test',
-      getAuthHeaders: devHeaders,
+      getAuthHeaders: cognitoHeaders,
       fetchImpl,
     })
 
@@ -131,7 +127,7 @@ describe('live API transport', () => {
 
     assert.equal(rows.length, 1)
     assert.equal(calls[0].url, 'https://api.example.test/registrations?eventId=event%201')
-    assert.equal(calls[0].init.headers['X-Univent-Role'], 'student')
+    assert.equal(calls[0].init.headers.Authorization, 'Bearer id-token')
   })
 
   it('creates events through the admin route', async () => {
@@ -175,13 +171,17 @@ describe('live API transport', () => {
     assert.equal(updated.title, 'Changed')
   })
 
-  it('submits, reads, lists, and decides organization applications with authorization', async () => {
+  it('submits applications publicly while protecting reads and admin decisions', async () => {
     const calls = []
     const application = {
-      userSub: 'applicant-sub',
+      applicationId: 'application-1',
       organizationName: 'Robotics Club',
-      officialEmail: 'robotics@ves.ac.in',
-      status: 'PENDING',
+      applicantName: 'Aarav Mehta',
+      officialEmail: 'codecell@ves.ac.in',
+      department: 'Engineering',
+      representativeTitle: 'Secretary',
+      reason: 'Manage events and registrations for the club.',
+      status: 'PENDING_APPROVAL',
     }
     const api = createLiveApi({
       baseUrl: 'https://api.example.test',
@@ -199,23 +199,26 @@ describe('live API transport', () => {
     })
     const details = {
       organizationName: 'Robotics Club',
-      officialEmail: 'robotics@ves.ac.in',
-      representativeName: 'Aarav Mehta',
+      applicantName: 'Aarav Mehta',
+      officialEmail: 'codecell@ves.ac.in',
+      department: 'Engineering',
       representativeTitle: 'Secretary',
-      representativePhone: '+1 555 010 1234',
+      reason: 'Manage events and registrations for the club.',
+      password: 'StrongPass123',
     }
 
-    assert.equal((await api.submitOrganizationApplication(details)).status, 'PENDING')
-    assert.equal((await api.getOrganizationApplication()).status, 'PENDING')
+    assert.equal((await api.submitOrganizationApplication(details)).status, 'PENDING_APPROVAL')
+    assert.equal((await api.getOrganizationApplication()).status, 'PENDING_APPROVAL')
     assert.equal((await api.listOrganizationApplications()).length, 1)
-    assert.equal((await api.decideOrganizationApplication('applicant/sub', 'APPROVED')).status, 'APPROVED')
+    assert.equal((await api.decideOrganizationApplication('application-1', 'APPROVE')).status, 'APPROVED')
     assert.equal(calls.length, 4)
     assert.equal(calls[0].url, 'https://api.example.test/organization-applications')
     assert.deepEqual(JSON.parse(calls[0].init.body), details)
-    assert.ok(calls.every((call) => call.init.headers.Authorization))
-    assert.equal(calls[3].url, 'https://api.example.test/admin/organization-applications/applicant%2Fsub')
+    assert.equal(calls[0].init.headers.Authorization, undefined)
+    assert.ok(calls.slice(1).every((call) => call.init.headers.Authorization))
+    assert.equal(calls[3].url, 'https://api.example.test/admin/organization-applications/application-1')
     assert.equal(calls[3].init.method, 'PATCH')
-    assert.deepEqual(JSON.parse(calls[3].init.body), { status: 'APPROVED', decisionReason: '' })
+    assert.deepEqual(JSON.parse(calls[3].init.body), { action: 'APPROVE' })
   })
 
   it('surfaces backend messages and status codes', async () => {

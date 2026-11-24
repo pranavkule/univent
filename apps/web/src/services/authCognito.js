@@ -9,11 +9,12 @@ import { COGNITO, assertCognitoConfig } from './authConfig.js'
 import { accountTypeFromClaims, roleFromGroups } from './authRoles.js'
 
 const pools = new Map()
+let passwordChangeUser = null
 
 function getPool(clientId = COGNITO.clientId) {
   assertCognitoConfig()
   if (!clientId) throw new Error('A Cognito app client is required for this authentication action.')
-  if (clientId !== COGNITO.clientId && clientId !== COGNITO.organizationApplicantClientId) {
+  if (clientId !== COGNITO.clientId) {
     throw new Error('The Cognito app client is not configured for this authentication action.')
   }
   if (!pools.has(clientId)) {
@@ -128,13 +129,6 @@ export function signUp(input) {
   return signUpWithClient(input, COGNITO.clientId)
 }
 
-export function signUpOrganizationApplicant(input) {
-  if (!COGNITO.organizationApplicantClientId) {
-    throw new Error('Cognito organization signup is not configured. Set VITE_COGNITO_ORGANIZATION_APPLICANT_CLIENT_ID.')
-  }
-  return signUpWithClient(input, COGNITO.organizationApplicantClientId)
-}
-
 export async function confirmSignUp({ email, code, clientId }) {
   const user = cognitoUser(email, clientId || COGNITO.clientId)
   return new Promise((resolve, reject) => {
@@ -162,9 +156,10 @@ export async function resendConfirmationCode({ email, clientId }) {
 }
 
 export async function signIn({ email, password }) {
-  const user = cognitoUser(email)
+  const cleanEmail = String(email || '').trim().toLowerCase()
+  const user = cognitoUser(cleanEmail)
   const details = new AuthenticationDetails({
-    Username: String(email || '').trim().toLowerCase(),
+    Username: cleanEmail,
     Password: password,
   })
 
@@ -179,13 +174,33 @@ export async function signIn({ email, password }) {
       },
       onFailure: (err) => reject(mapError(err)),
       newPasswordRequired: () => {
-        reject(new Error('Your account requires a password change. Ask an administrator for help.'))
+        passwordChangeUser = user
+        resolve({ requiresPasswordChange: true })
       },
     })
   })
 }
 
+export async function completeNewPassword(newPassword) {
+  const user = passwordChangeUser
+  if (!user) throw new Error('No Cognito password-change challenge is active. Sign in again.')
+  return new Promise((resolve, reject) => {
+    user.completeNewPasswordChallenge(newPassword, {}, {
+      onSuccess: (session) => {
+        passwordChangeUser = null
+        try {
+          resolve(publicUserFromSession(session))
+        } catch (err) {
+          reject(mapError(err))
+        }
+      },
+      onFailure: (err) => reject(mapError(err)),
+    })
+  })
+}
+
 export async function signOut() {
+  passwordChangeUser = null
   const user = getPool().getCurrentUser()
   if (user) user.signOut()
 }

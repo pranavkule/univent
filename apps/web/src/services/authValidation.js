@@ -45,3 +45,12 @@ export function validateConfirmationInput({ code }) {
   }
   return errors
 }
+
+export function validateNewPasswordInput(password, confirmation) {
+  if (!password || password.length < 8) return 'Password must be at least 8 characters.'
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'Use uppercase, lowercase, and a number.'
+  }
+  if (password !== confirmation) return 'The passwords do not match.'
+  return ''
+}

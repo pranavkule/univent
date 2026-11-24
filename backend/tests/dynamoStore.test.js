@@ -33,6 +33,8 @@ function makeStore(fake, options = {}) {
     eventsTable: 'Events',
     registrationsTable: 'Registrations',
     organizationApplicationsTable: 'OrganizationApplications',
+    publicOrganizationApplicationsTable: 'PublicApplications',
+    organizationApplicationLocksTable: 'ApplicationLocks',
     retryBaseDelayMs: 0,
     ...options,
   })
@@ -435,17 +437,112 @@ describe('DynamoDB store', () => {
     assert.equal(fake.calls[1].input.ExpressionAttributeValues[':expected0'], 'PENDING')
   })
 
+  it('re-reads indexed organization access state consistently before authorization', async () => {
+    const fake = new FakeClient((command) => {
+      if (command.constructor.name === 'GetCommand') {
+        if (command.input.TableName === 'OrganizationApplications') return {}
+        return {
+          Item: {
+            applicationId: 'application-1',
+            cognitoSub: 'cognito-sub',
+            status: 'SUSPENDED',
+          },
+        }
+      }
+      if (command.constructor.name === 'QueryCommand') {
+        return {
+          Items: [{
+            applicationId: 'application-1',
+            cognitoSub: 'cognito-sub',
+            status: 'APPROVED',
+          }],
+        }
+      }
+      throw new Error(`Unexpected command: ${command.constructor.name}`)
+    })
+    const store = makeStore(fake)
+
+    const application = await store.getOrganizationApplication('cognito-sub')
+
+    assert.equal(application.status, 'SUSPENDED')
+    assert.equal(fake.calls[1].input.IndexName, 'CognitoSubIndex')
+    assert.equal(fake.calls[2].input.ConsistentRead, true)
+    assert.equal(fake.calls[2].input.Key.applicationId, 'application-1')
+  })
+
   it('lists organization applications from the application table', async () => {
-    const fake = new FakeClient(() => ({
-      Items: [{ userSub: 'applicant', appliedAt: '2026-10-01' }],
+    const fake = new FakeClient((command) => ({
+      Items: command.input.TableName === 'OrganizationApplications'
+        ? [{ userSub: 'applicant', appliedAt: '2026-10-01' }]
+        : [],
     }))
     const store = makeStore(fake)
 
     const applications = await store.listOrganizationApplications()
 
     assert.equal(applications[0].userSub, 'applicant')
-    assert.equal(fake.calls[0].input.TableName, 'OrganizationApplications')
-    assert.equal(fake.calls[0].input.ConsistentRead, true)
+    assert.equal(applications[0].isLegacy, true)
+    assert.ok(fake.calls.some((call) =>
+      call.input.TableName === 'OrganizationApplications'
+      && call.input.ConsistentRead === true))
+    assert.ok(fake.calls.some((call) =>
+      call.input.TableName === 'PublicApplications'
+      && call.input.ConsistentRead === true))
+  })
+
+  it('creates a pending-approval application and duplicate lock without a password', async () => {
+    const fake = new FakeClient((command) => {
+      if (command.constructor.name === 'GetCommand') return {}
+      if (command.constructor.name === 'TransactWriteCommand') return {}
+      throw new Error(`Unexpected command: ${command.constructor.name}`)
+    })
+    const store = makeStore(fake)
+    const application = await store.createPendingOrganizationApplication({
+      organizationName: 'Robotics Club',
+      applicantName: 'Aarav Mehta',
+      officialEmail: 'CODECELL@VES.AC.IN',
+    }, { passwordExpiresAt: 1_800_000_000 })
+
+    assert.match(application.applicationId, /^[0-9a-f-]{36}$/i)
+    assert.equal(application.status, 'PENDING_APPROVAL')
+    assert.equal(application.officialEmail, 'CODECELL@VES.AC.IN')
+    assert.equal(application.password, undefined)
+    assert.equal(application.passwordExpiresAt, 1_800_000_000)
+    const transaction = fake.calls.find((call) =>
+      call.constructor.name === 'TransactWriteCommand').input
+    assert.equal(transaction.TransactItems.length, 2)
+    assert.equal(transaction.TransactItems[0].Put.TableName, 'PublicApplications')
+    assert.match(transaction.TransactItems[0].Put.ConditionExpression, /attribute_not_exists/)
+    assert.equal(transaction.TransactItems[1].Put.TableName, 'ApplicationLocks')
+    assert.match(transaction.TransactItems[1].Put.ConditionExpression, /attribute_not_exists/)
+    assert.equal(transaction.TransactItems[1].Put.Item.applicationId, application.applicationId)
+    assert.equal(transaction.TransactItems[1].Put.Item.status, 'PENDING_APPROVAL')
+  })
+
+  it('updates application status and duplicate lock conditionally in one transaction', async () => {
+    const current = {
+      applicationId: 'application-1',
+      duplicateKey: 'duplicate-key',
+      status: 'PENDING_APPROVAL',
+    }
+    const fake = new FakeClient((command) => {
+      if (command.constructor.name === 'GetCommand') return { Item: current }
+      if (command.constructor.name === 'TransactWriteCommand') return {}
+      throw new Error(`Unexpected command: ${command.constructor.name}`)
+    })
+    const store = makeStore(fake)
+    await store.updatePublicOrganizationApplication('application-1', {
+      status: 'APPROVED',
+      cognitoSub: 'organization-sub',
+      auditEntry: { action: 'APPROVE', actorSub: 'admin-sub' },
+    }, ['PENDING_APPROVAL'])
+
+    const transaction = fake.calls.find((call) =>
+      call.constructor.name === 'TransactWriteCommand').input
+    assert.equal(transaction.TransactItems.length, 2)
+    assert.match(transaction.TransactItems[0].Update.ConditionExpression, /#status IN/)
+    assert.match(transaction.TransactItems[1].Update.ConditionExpression, /#applicationId = :applicationId/)
+    assert.equal(transaction.TransactItems[1].Update.Key.duplicateKey, 'duplicate-key')
   })
 
   it('refuses to lower capacity below the current counter', async () => {
